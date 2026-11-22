@@ -1,0 +1,55 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net8.0-windows</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../windows/TetherBridge.Desktop/FullTunnel/TunnelDnsProbe.cs" Link="TunnelDnsProbe.cs" />
+    <Compile Include="../../windows/TetherBridge.Desktop/FullTunnel/TunnelLeaseMonitor.cs" Link="TunnelLeaseMonitor.cs" />
+    <Compile Include="../../windows/TetherBridge.Desktop/FullTunnel/TunnelSessionSupervisor.cs" Link="TunnelSessionSupervisor.cs" />
+    <Compile Include="../../windows/TetherBridge.Desktop/FullTunnel/TunnelRouteCoverage.cs" Link="TunnelRouteCoverage.cs" />
+    <Compile Include="../../windows/TetherBridge.Desktop/FullTunnel/WindowsTunnelAdapterBackend.cs" Link="WindowsTunnelAdapterBackend.cs" />
+    <Compile Include="../../windows/TetherBridge.Desktop/FullTunnel/TunnelAdapterConfigurator.cs" Link="TunnelAdapterConfigurator.cs" />
+    <Compile Include="../../windows/TetherBridge.Desktop/FullTunnel/TunnelAdapterCommands.cs" Link="TunnelAdapterCommands.cs" />
+    <Compile Include="../../windows/TetherBridge.Desktop/FullTunnel/TunnelPathTrust.cs" Link="TunnelPathTrust.cs" />
+    <Compile Include="../../windows/TetherBridge.Desktop/FullTunnel/TunnelEngineLauncher.cs" Link="TunnelEngineLauncher.cs" />
+    <Compile Include="../../windows/TetherBridge.Desktop/FullTunnel/WindowsPrivateAdapterSnapshot.cs" Link="WindowsPrivateAdapterSnapshot.cs" />
+    <Compile Include="../../windows/TetherBridge.Desktop/FullTunnel/PrivateRouteInspector.cs" Link="PrivateRouteInspector.cs" />
+    <Compile Include="../../windows/TetherBridge.Desktop/FullTunnel/WindowsRouteTable.cs" Link="WindowsRouteTable.cs" />
+    <Compile Include="../../windows/TetherBridge.Desktop/FullTunnel/TunnelCommandProcess.cs" Link="TunnelCommandProcess.cs" />
+    <Compile Include="../../windows/TetherBridge.Desktop/FullTunnel/ChildProcessJob.cs" Link="ChildProcessJob.cs" />
+    <Compile Include="../../windows/TetherBridge.Desktop/FullTunnel/NetshRouteRunner.cs" Link="NetshRouteRunner.cs" />
+    <Compile Include="../../windows/TetherBridge.Desktop/FullTunnel/RouteLeaseManager.cs" Link="RouteLeaseManager.cs" />
+    <Compile Include="../../windows/TetherBridge.Desktop/FullTunnel/TunnelRouteCommands.cs" Link="TunnelRouteCommands.cs" />
+    <Compile Include="../../windows/TetherBridge.Desktop/Transports/BandwidthLimitedTransport.cs" Link="BandwidthLimitedTransport.cs" />
+    <Compile Include="../../windows/TetherBridge.Desktop/Transports/BandwidthLimiter.cs" Link="BandwidthLimiter.cs" />
+    <Compile Include="../../windows/TetherBridge.Desktop/Services/UsbHotplugDetector.cs" Link="UsbHotplugDetector.cs" />
+    <Compile Include="../../windows/TetherBridge.Desktop/Services/CloseLifecycle.cs" Link="CloseLifecycle.cs" />
+    <Compile Include="../../windows/TetherBridge.Desktop/Services/ConnectionActionGate.cs" Link="ConnectionActionGate.cs" />
+    <Compile Include="../../windows/TetherBridge.Desktop/Services/DesktopSettingsStore.cs" Link="DesktopSettingsStore.cs" />
+    <Compile Include="../../windows/TetherBridge.Desktop/Transports/HttpProbeResponseReader.cs" Link="HttpProbeResponseReader.cs" />
+    <Compile Include="../../windows/TetherBridge.Desktop/Services/ProxyStartupRecovery.cs" Link="ProxyStartupRecovery.cs" />
+    <Compile Include="../../windows/TetherBridge.Desktop/FullTunnel/NetworkTransaction.cs" Link="NetworkTransaction.cs" />
+    <Compile Include="../../windows/TetherBridge.Desktop/Services/LocalSocks5Relay.cs" Link="LocalSocks5Relay.cs" />
+    <Compile Include="../../windows/TetherBridge.Desktop/Services/DuplexRelay.cs" Link="DuplexRelay.cs" />
+    <Compile Include="../../windows/TetherBridge.Desktop/Transports/FramedUsbStream.cs" Link="FramedUsbStream.cs" />
+    <Compile Include="../../windows/TetherBridge.Desktop/Transports/TlsPhoneStream.cs" Link="TlsPhoneStream.cs" />
+    <Compile Include="../../windows/TetherBridge.Desktop/Transports/HalfCloseNetworkStream.cs" Link="HalfCloseNetworkStream.cs" />
+    <Compile Include="../../windows/TetherBridge.Desktop/Services/LocalRelayProxy.cs" Link="LocalRelayProxy.cs" />
+    <Compile Include="../../windows/TetherBridge.Desktop/Services/PairingPayload.cs" Link="PairingPayload.cs" />
+    <Compile Include="../../windows/TetherBridge.Desktop/Services/PairingPayloadParser.cs" Link="PairingPayloadParser.cs" />
+    <Compile Include="../../windows/TetherBridge.Desktop/Services/AdbDeviceCatalog.cs" Link="AdbDeviceCatalog.cs" />
+    <Compile Include="../../windows/TetherBridge.Desktop/Services/SocksDnsResolver.cs" Link="SocksDnsResolver.cs" />
+    <Compile Include="../../windows/TetherBridge.Desktop/Services/LocalDnsProxy.cs" Link="LocalDnsProxy.cs" />
+    <Compile Include="../../windows/TetherBridge.Desktop/Services/DnsMessageValidation.cs" Link="DnsMessageValidation.cs" />
+    <Compile Include="../../windows/TetherBridge.Desktop/Services/PhoneCapabilities.cs" Link="PhoneCapabilities.cs" />
+    <Compile Include="../../windows/TetherBridge.Desktop/Services/SocksUdpAssociation.cs" Link="SocksUdpAssociation.cs" />
+    <Compile Include="../../windows/TetherBridge.Desktop/Services/SocksUdpDatagram.cs" Link="SocksUdpDatagram.cs" />
+    <Compile Include="../../windows/TetherBridge.Desktop/Services/AdbService.cs" Link="AdbService.cs" />
+    <Compile Include="../../windows/TetherBridge.Desktop/Services/AdbForwardAllocator.cs" Link="AdbForwardAllocator.cs" />
+    <Compile Include="../../windows/TetherBridge.Desktop/Services/ConnectionTransition.cs" Link="ConnectionTransition.cs" />
+    <Compile Include="../../windows/TetherBridge.Desktop/Services/ProxyProfileStore.cs" Link="ProxyProfileStore.cs" />
+    <Compile Include="../../windows/TetherBridge.Desktop/Services/WindowsProxySettings.cs" Link="WindowsProxySettings.cs" />
+    <Compile Include="../../windows/TetherBridge.Desktop/Services/DiagnosticResult.cs" Link="DiagnosticResult.cs" />
+    <Compile Include="../../windows/TetherBridge.Desktop/Transports/TcpPhoneTransport.cs" Link="TcpPhoneTransport.cs" />
+    <Compile Include="../../windows/TetherBridge.Desktop/Transports/IPhoneTransport.cs" Link="IPhoneTransport.cs" />
+    <Compile Include="../../windows/TetherBridge.Desktop/Transports/PhoneBridgeSession.cs" Link="PhoneBridgeSession.cs" />
+  </ItemGroup>
+</Project>

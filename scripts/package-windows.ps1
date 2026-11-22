@@ -6,8 +6,11 @@ $ErrorActionPreference = 'Stop'
 $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $publish = if ($PublishPath) { [IO.Path]::GetFullPath($PublishPath) } else { Join-Path $root 'dist\windows-selfcontained' }
 $exe = Get-Item -LiteralPath (Join-Path $publish 'TetherBridge.Desktop.exe')
-$version = $exe.VersionInfo.ProductVersion
-if ($version -notmatch '^[0-9]{1,5}\.[0-9]{1,5}\.[0-9]{1,5}$') { throw 'The Windows executable has no supported release version.' }
+$productVersion = $exe.VersionInfo.ProductVersion
+if ($productVersion -notmatch '^(?<release>[0-9]{1,5}\.[0-9]{1,5}\.[0-9]{1,5})(?:\+[0-9A-Za-z.-]+)?$') {
+    throw 'The Windows executable has no supported release version.'
+}
+$version = $Matches['release']
 $package = if ($PackagePath) { [IO.Path]::GetFullPath($PackagePath) } else { Join-Path $root "dist\TetherBridge-$version-installer" }
 $publish = $publish.TrimEnd('\')
 $package = $package.TrimEnd('\')

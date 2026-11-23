@@ -6,6 +6,64 @@ using TetherBridge.Desktop.Transports;
 using Windows.Networking.Connectivity;
 using Windows.Networking.NetworkOperators;
 
+if (args is ["--benchmark-bridge-usb", var benchmarkSerial, var benchmarkOrigin, var benchmarkSize, var benchmarkWorkers] &&
+    Uri.TryCreate(benchmarkOrigin, UriKind.Absolute, out var bridgeOrigin) &&
+    int.TryParse(benchmarkSize, out var bridgeSize) && int.TryParse(benchmarkWorkers, out var bridgeWorkers))
+{
+    try
+    {
+        await WithUsbRelayAsync(benchmarkSerial, port => LabUsbBenchmark.RunAsync(bridgeOrigin, bridgeSize, bridgeWorkers, port, null));
+        return 0;
+    }
+    catch (Exception error)
+    {
+        Console.Error.WriteLine(error.Message);
+        return 1;
+    }
+}
+
+if (args is ["--measure-usb-recovery", var recoveryOrigin, var recoveryPort] &&
+    Uri.TryCreate(recoveryOrigin, UriKind.Absolute, out var recoveryUrl) &&
+    int.TryParse(recoveryPort, out var recoverySocksPort) && recoverySocksPort is > 0 and <= 65535)
+{
+    try
+    {
+        await LabUsbBenchmark.MeasureRecoveryAsync(recoveryUrl, recoverySocksPort);
+        return 0;
+    }
+    catch (Exception error)
+    {
+        Console.Error.WriteLine(error.Message);
+        return 1;
+    }
+}
+
+if (args.Length == 6 && args[0] == "--benchmark-usb" &&
+    Uri.TryCreate(args[1], UriKind.Absolute, out var origin) &&
+    int.TryParse(args[2], out var mib) && int.TryParse(args[3], out var workers) &&
+    int.TryParse(args[5], out var number) &&
+    ((args[4] == "direct" && number >= 0) || (args[4] == "socks" && number is > 0 and <= 65535)))
+{
+    try
+    {
+        await LabUsbBenchmark.RunAsync(origin, mib, workers,
+            args[4] == "socks" ? number : null, args[4] == "direct" && number > 0 ? number : null);
+        return 0;
+    }
+    catch (Exception error)
+    {
+        Console.Error.WriteLine(error.Message);
+        return 1;
+    }
+}
+
+if (args is ["--check-usb-setup"])
+{
+    Console.WriteLine((await UsbDevicePresence.CheckAsync()).ToDisplayString());
+    Console.WriteLine(new NativeTetherInspector().CheckUsbRoute().ToDisplayString());
+    return 0;
+}
+
 if (args is ["--verify-tunnel-https", var adapter, var remote, var url] &&
     Guid.TryParse(adapter, out var probeAdapter) && IPAddress.TryParse(remote, out var probeRemote) &&
     Uri.TryCreate(url, UriKind.Absolute, out var probeUrl))
@@ -14,6 +72,23 @@ if (args is ["--verify-tunnel-https", var adapter, var remote, var url] &&
     {
         await LabHttpsProbe.CheckAsync(probeAdapter, probeRemote, probeUrl, CancellationToken.None);
         Console.WriteLine("HTTPS passed through the selected tunnel adapter with Windows proxy bypassed.");
+        return 0;
+    }
+    catch (Exception error)
+    {
+        Console.Error.WriteLine(error.Message);
+        return 1;
+    }
+}
+
+if (args is ["--check-usb-traffic", var usbSerial, var resolverIp, var httpsUrl] &&
+    IPAddress.TryParse(resolverIp, out var trafficResolver) &&
+    Uri.TryCreate(httpsUrl, UriKind.Absolute, out var trafficUrl) && trafficUrl.Scheme == Uri.UriSchemeHttps && trafficUrl.UserInfo.Length == 0)
+{
+    try
+    {
+        await CheckUsbDnsAsync(usbSerial, trafficResolver, trafficUrl);
+        Console.WriteLine("HTTPS and DNS passed through the selected USB bridge.");
         return 0;
     }
     catch (Exception error)
@@ -125,6 +200,7 @@ if ((!shareWifi && args.Length != 2) || args[0] != "--isolated-network-test" || 
     Console.WriteLine("Record or compare a baseline: --capture-state <file> or --compare-state <file>");
     Console.WriteLine("Check the interface Windows prefers for an IP: --check-preferred-interface <IP>");
     Console.WriteLine("Verify HTTPS without a proxy: --verify-tunnel-https <adapter GUID> <destination IP> <https URL>");
+    Console.WriteLine("Measure USB paths: --benchmark-usb <origin> <MiB-per-stream> <streams> <direct|socks> <interface-index|SOCKS-port>");
     Console.WriteLine("Read-only check: TetherBridge.TunnelLab --check-routes");
     Console.WriteLine("Usage: TetherBridge.TunnelLab --isolated-network-test <upstream DNS IP> [--share-wifi]");
     Console.WriteLine("Starts real Windows routing and adapter DNS. Requires a dedicated USB or Bluetooth SOCKS5 relay on 127.0.0.1:10810.");
@@ -186,25 +262,48 @@ finally
 }
 
 
-static async Task CheckUsbDnsAsync(string serial, IPAddress resolver)
+static Task CheckUsbDnsAsync(string serial, IPAddress resolver, Uri? trafficUrl = null) =>
+    WithUsbRelayAsync(serial, async socksPort =>
+    {
+        var dnsRuntime = new WindowsFullTunnelRuntime(resolver);
+        try
+        {
+            await dnsRuntime.StartDnsAsync(socksPort, CancellationToken.None);
+            if (trafficUrl is not null)
+            {
+                using var handler = new HttpClientHandler
+                {
+                    Proxy = new WebProxy($"socks5://127.0.0.1:{socksPort}"),
+                    UseProxy = true,
+                    AllowAutoRedirect = false
+                };
+                using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(15) };
+                using var response = await client.GetAsync(trafficUrl, HttpCompletionOption.ResponseHeadersRead);
+                response.EnsureSuccessStatusCode();
+            }
+        }
+        finally { await dnsRuntime.StopEngineAsync(CancellationToken.None); }
+    });
+
+static async Task WithUsbRelayAsync(string serial, Func<int, Task> run)
 {
     var adb = new AdbService(serial);
     var (forward, port) = await adb.AllocateForwardAsync(10889);
     if (!forward.Ok) throw new IOException(forward.ToDisplayString());
-    var dnsRuntime = new WindowsFullTunnelRuntime(resolver);
     var relay = new LocalSocks5Relay();
     try
     {
         var transport = new TcpPhoneTransport("127.0.0.1", port, framedUsb: true);
+        var health = await transport.ProbeHealthAsync(null);
+        if (!health.Ok) throw new IOException(health.ToDisplayString());
         var status = await transport.ProbeStatusAsync(null);
-        if (!status.Ok || !PhoneCapabilities.SupportsUdp(status.Message))
-            throw new IOException("The selected Android USB bridge did not advertise UDP support.");
-        relay.Start(new PhoneBridgeSession(transport, null), 0, _ => { });
-        await dnsRuntime.StartDnsAsync(relay.Port, CancellationToken.None);
+        if (!status.Ok) throw new IOException(status.ToDisplayString());
+        relay.Start(new PhoneBridgeSession(transport, null), 0, _ => { },
+            allowUdp: PhoneCapabilities.SupportsUdp(status.Message));
+        await run(relay.Port);
     }
     finally
     {
-        await dnsRuntime.StopEngineAsync(CancellationToken.None);
         relay.Stop();
         var released = await adb.ReleaseOwnedForwardAsync();
         if (!released.Ok) throw new IOException(released.ToDisplayString());

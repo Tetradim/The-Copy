@@ -75,10 +75,10 @@ assert_contains("Android manifest", manifest, "android.permission.ACCESS_WIFI_ST
 assert_contains("Android manifest", manifest, "android.permission.WAKE_LOCK")
 assert_contains("Android manifest", manifest, "android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS")
 assert_contains("Android manifest", manifest, "android.permission.BLUETOOTH_CONNECT")
-assert_contains("Android build version", android_build, 'versionName = "0.6.7"')
-assert_contains("Android build version", android_build, "versionCode = 67")
+assert_contains("Android build version", android_build, 'versionName = "0.6.8"')
+assert_contains("Android build version", android_build, "versionCode = 68")
 assert_contains("Android QR dependency", android_build, "com.google.zxing:core")
-assert_contains("Windows build version", desktop_project, "<Version>0.6.9</Version>")
+assert_contains("Windows build version", desktop_project, "<Version>0.6.12</Version>")
 
 # Android token and UI honesty.
 assert_not_contains("MainActivity token handling", main_activity, "private var token: String = ProxyConfig.generateToken()")

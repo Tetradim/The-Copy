@@ -141,7 +141,7 @@ public sealed class TcpPhoneTransport(string host, int port, string? fingerprint
     private string PhoneProbeFix(ProbeResult response)
     {
         if (framedUsb)
-            return "Install the matching Android 0.6.4 app, open it, tap Start USB Bridge, and confirm USB debugging is authorized. The Windows app creates the ADB forward automatically.";
+            return "Install the current TetherBridge Android app, open it, tap Start USB Bridge, and confirm USB debugging is authorized. The Windows app creates the ADB forward automatically.";
         if (fingerprint is not null)
             return "Check that the Android Wi-Fi bridge is running and reachable, then pair again using its current certificate fingerprint and token.";
         if (response.Exception is OperationCanceledException || response.ResponseBytes == 0)

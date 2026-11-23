@@ -23,8 +23,10 @@ public sealed class MainForm : Form
     private readonly TextBox _token = new() { Width = 260 };
     private readonly TextBox _fingerprint = new() { Width = 600 };
     private readonly ComboBox _bluetoothDevice = new() { Width = 520, DropDownStyle = ComboBoxStyle.DropDownList };
+    private readonly ComboBox _connectionType = new() { Width = 220, DropDownStyle = ComboBoxStyle.DropDownList, AccessibleName = "Connection type" };
+    private readonly TextBox _bluetoothPairingPayload = new() { Width = 640, AccessibleName = "Android Bluetooth pairing details" };
     private readonly ComboBox _usbDevice = new() { Width = 520, DropDownStyle = ComboBoxStyle.DropDownList };
-    private readonly Label _connectionState = new() { Width = 780, Height = 34, Text = "State: idle" };
+    private readonly Label _connectionState = new() { Width = 780, Height = 48, Text = "Disconnected" };
     private readonly Label _localStats = new() { Width = 780, Height = 52, Text = "Local relay: not running" };
     private readonly Label _socksStats = new() { Width = 780, Height = 52, Text = "SOCKS5 relay: not running" };
     private readonly Label _phoneStats = new() { Width = 780, Height = 92, Text = "Phone status: no active session" };
@@ -46,10 +48,12 @@ public sealed class MainForm : Form
     private readonly DesktopSettingsStore _settings = new(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "TetherBridge", "settings.json"));
     private readonly NotifyIcon _tray = new();
     private readonly CheckBox _autoConnectUsb = new() { Text = "Automatically connect USB at startup and when plugged in", AutoSize = true };
+    private readonly CheckBox _autoReconnectBluetooth = new() { Text = "Reconnect this Bluetooth bridge after a drop", AutoSize = true, Checked = true };
     private bool _exitRequested;
     private readonly RecentLogBuffer _logLines = new();
     private PhoneBridgeSession? _session;
     private AdbService? _usbAdb;
+    private readonly HashSet<AdbService> _pendingUsbCleanup = new();
     private CancellationTokenSource? _sessionMonitorCts;
     private bool _restoringAfterSessionLoss;
     private readonly CloseLifecycle _closeLifecycle = new();
@@ -65,10 +69,7 @@ public sealed class MainForm : Form
 
         var tabs = new TabControl { Dock = DockStyle.Fill };
         tabs.TabPages.Add(BuildConnectionTab());
-        tabs.TabPages.Add(BuildTrafficTab());
-        tabs.TabPages.Add(BuildPairingTab());
-        tabs.TabPages.Add(BuildDiagnosticsTab());
-        tabs.TabPages.Add(BuildLogsTab());
+        tabs.TabPages.Add(BuildAdvancedTab());
         Controls.Add(tabs);
         _usbDevice.Items.Add("Automatic (one authorized device)");
         _usbDevice.SelectedIndex = 0;
@@ -110,7 +111,7 @@ public sealed class MainForm : Form
     {
         var menu = new ContextMenuStrip();
         menu.Items.Add("Open TetherBridge", null, (_, _) => ShowFromTray());
-        menu.Items.Add("Connect USB", null, async (_, _) => { try { await _actionGate.RunAsync(StartUsbAsync); } catch (Exception ex) { ReportTrayFailure("USB connection failed", ex); } });
+        menu.Items.Add("Connect selected mode", null, async (_, _) => { try { await _actionGate.RunAsync(ConnectSelectedAsync); } catch (Exception ex) { ReportTrayFailure("Connection failed", ex); } });
         menu.Items.Add("Disconnect / restore proxy", null, async (_, _) => { try { await _actionGate.RunAsync(RestoreProxyAsync); } catch (Exception ex) { ReportTrayFailure("Disconnect failed", ex); } });
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Exit", null, (_, _) => { _exitRequested = true; Close(); });
@@ -158,24 +159,83 @@ public sealed class MainForm : Form
         catch (Exception ex) { Log("STARTUP_RECOVERY_FAILED: " + ex.Message); }
     }
 
+    private bool IsBluetoothSelected => _connectionType.SelectedIndex == 1;
+
+    private Task ConnectSelectedAsync() =>
+        IsBluetoothSelected ? StartBluetoothBridgeAsync() : StartUsbAsync();
+
     private TabPage BuildConnectionTab()
     {
-        var page = new TabPage("Status");
+        var page = new TabPage("Connect");
         var root = Panel();
-        root.Controls.Add(Header("Connection modes"));
+        root.Controls.Add(Header("Connect your phone"));
         root.Controls.Add(_connectionState);
-        root.Controls.Add(new Label { Text = "Android device (selection applies to the next connection):", Width = 650, Height = 24 });
-        root.Controls.Add(_usbDevice);
-        root.Controls.Add(Button("Refresh USB devices", RefreshUsbDevicesAsync, width: 180));
+        root.Controls.Add(new Label { Text = "The bridge provides a Windows proxy for apps that support it.", Width = 780, Height = 24 });
+        _connectionType.Items.AddRange(["USB", "Bluetooth"]);
+        root.Controls.Add(_connectionType);
+
+        var usb = ConnectionOptions();
+        usb.Controls.Add(new Label { Text = "Start USB Bridge on Android and select the device here.", Width = 750, Height = 24 });
+        _usbDevice.AccessibleName = "USB device";
+        usb.Controls.Add(_usbDevice);
+        usb.Controls.Add(Button("Refresh USB devices", RefreshUsbDevicesAsync, width: 180));
+        usb.Controls.Add(Button("USB setup help", ShowUsbSetupAsync, width: 150));
+        root.Controls.Add(usb);
+
+        var bluetooth = ConnectionOptions();
+        bluetooth.Controls.Add(new Label { Text = "Pair the phone in Windows and start Bluetooth Bridge on Android.", Width = 750, Height = 24 });
+        _bluetoothDevice.AccessibleName = "Paired Bluetooth device";
+        bluetooth.Controls.Add(_bluetoothDevice);
+        bluetooth.Controls.Add(Button("Refresh paired devices", RefreshBluetoothDevicesAsync, width: 180));
+        bluetooth.Controls.Add(new Label { Text = "Paste the pairing details shown on the Android app.", Width = 750, Height = 24 });
+        bluetooth.Controls.Add(_bluetoothPairingPayload);
+        bluetooth.Controls.Add(_autoReconnectBluetooth);
+        root.Controls.Add(bluetooth);
+
+        _connectionType.SelectedIndexChanged += (_, _) =>
+        {
+            usb.Visible = !IsBluetoothSelected;
+            bluetooth.Visible = IsBluetoothSelected;
+        };
+        _connectionType.SelectedIndex = 0;
+        var actions = new FlowLayoutPanel { Width = 760, Height = 44, WrapContents = false };
+        actions.Controls.Add(Button("Connect", ConnectSelectedAsync, width: 112));
+        actions.Controls.Add(Button("Disconnect", RestoreProxyAsync, width: 112));
+        actions.Controls.Add(Button("Test internet through bridge", TestBridgeInternetAsync, width: 220));
+        root.Controls.Add(actions);
+        page.Controls.Add(root);
+        return page;
+    }
+
+    private static FlowLayoutPanel ConnectionOptions() => new()
+    {
+        Width = 800, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+        FlowDirection = FlowDirection.TopDown, WrapContents = false
+    };
+
+    private TabPage BuildAdvancedTab()
+    {
+        var page = new TabPage("Advanced");
+        var tabs = new TabControl { Dock = DockStyle.Fill };
+        tabs.TabPages.Add(BuildNetworkOptionsTab());
+        tabs.TabPages.Add(BuildPairingTab());
+        tabs.TabPages.Add(BuildTrafficTab());
+        tabs.TabPages.Add(BuildDiagnosticsTab());
+        tabs.TabPages.Add(BuildLogsTab());
+        page.Controls.Add(tabs);
+        return page;
+    }
+
+    private TabPage BuildNetworkOptionsTab()
+    {
+        var page = new TabPage("Network and Recovery");
+        var root = Panel();
         root.Controls.Add(_autoConnectUsb);
-        root.Controls.Add(ModeCard("USB Bridge", "Uses adb forward to reach the Android bridge over USB.", StartUsbAsync));
+        root.Controls.Add(Button("Retry USB forward cleanup", RetryUsbCleanupAsync, width: 230));
+        root.Controls.Add(Button("Open Windows Bluetooth settings", OpenBluetoothPanSettingsAsync, width: 255));
+        root.Controls.Add(Button("Check native Bluetooth PAN", StartBluetoothPanAsync, width: 220));
         root.Controls.Add(WifiCard());
         root.Controls.Add(ModeCard("Wi-Fi / Hotspot Assist", "Checks likely phone hotspot/Wi-Fi gateways and gives setup guidance.", WifiAssistAsync));
-        root.Controls.Add(new Label { Text = "Paired Bluetooth device:", Width = 650, Height = 24 });
-        root.Controls.Add(_bluetoothDevice);
-        root.Controls.Add(Button("Refresh paired Bluetooth", RefreshBluetoothDevicesAsync, width: 200));
-        root.Controls.Add(Button("Start Bluetooth Bridge", StartBluetoothBridgeAsync, width: 200));
-        root.Controls.Add(ModeCard("Bluetooth/PAN Assist", "Checks Bluetooth PAN status. If PAN is up, use the phone PAN IP in Wi-Fi Bridge.", StartBluetoothPanAsync));
         root.Controls.Add(ModeCard("Native Tether Assist", "Checks for existing native USB, Wi-Fi hotspot, or Bluetooth tethering routes.", NativeAssistAsync));
         root.Controls.Add(new Label { Text = "Bandwidth limit in KiB/s per direction (0 = unlimited; applies on next connection):", Width = 750, Height = 24 });
         root.Controls.Add(_bandwidthLimit);
@@ -188,6 +248,11 @@ public sealed class MainForm : Form
         root.Controls.Add(Button("Start local DNS", StartDnsAsync, width: 180));
         root.Controls.Add(Button("Stop local DNS", StopDnsAsync, width: 180));
         root.Controls.Add(ModeCard("View Traffic Status", "Refreshes live local relay counters and Android /status if reachable.", ShowTrafficStatusAsync));
+        root.Controls.Add(new Label
+        {
+            Text = "Full routing, automatic Windows DNS and Wi-Fi Share are available for testing in the separate Tunnel Lab.",
+            Width = 800, Height = 40
+        });
         page.Controls.Add(root);
         return page;
     }
@@ -363,12 +428,78 @@ public sealed class MainForm : Form
 
     private Task StartUsbAsync() => StartUsbAsync(null, null);
 
+    private async Task<DiagnosticResult> ReleaseOrRememberUsbForwardAsync(AdbService adb)
+    {
+        _pendingUsbCleanup.Add(adb);
+        var result = await adb.ReleaseOwnedForwardAsync();
+        if (result.Ok) _pendingUsbCleanup.Remove(adb);
+        Log(result.ToDisplayString());
+        return result;
+    }
+
+    private async Task RetryUsbCleanupAsync()
+    {
+        if (_pendingUsbCleanup.Count == 0)
+        {
+            Log("ADB_CLEANUP_IDLE: No USB cleanup is pending.");
+            return;
+        }
+        foreach (var owner in _pendingUsbCleanup.ToArray())
+            await ReleaseOrRememberUsbForwardAsync(owner);
+    }
+
+    private async Task ShowUsbSetupAsync()
+    {
+        var results = new List<DiagnosticResult> { await UsbDevicePresence.CheckAsync(), new NativeTetherInspector().CheckUsbRoute() };
+        var adb = new AdbService(SelectedUsbSerial);
+        var device = await adb.CheckAsync();
+        results.Add(device);
+        if (device.Ok)
+        {
+            var package = await adb.QueryPackageVersionAsync();
+            results.Add(package);
+            if (package.Ok)
+            {
+                var (forward, port) = await adb.AllocateForwardAsync(10889);
+                if (!forward.Ok) results.Add(forward);
+                else
+                {
+                    try { results.Add(await new TcpPhoneTransport("127.0.0.1", port, framedUsb: true).ProbeHealthAsync(null)); }
+                    finally { results.Add(await ReleaseOrRememberUsbForwardAsync(adb)); }
+                }
+            }
+        }
+
+        foreach (var result in results) Log(result.ToDisplayString());
+        var details = string.Join("\n\n", results.Select(result => result.Ok
+            ? result.Message : result.Message + "\n" + result.Fix));
+        MessageBox.Show(this,
+            "Native USB: use Android's USB tethering switch. This path uses the Windows network adapter.\n\n" +
+            "USB Bridge: enable USB debugging, authorize this PC and tap Start USB Bridge in Android. " +
+            "Then use USB Bridge in this app for HTTP and SOCKS proxy access.\n\n" + details,
+            "USB setup and checks", MessageBoxButtons.OK, MessageBoxIcon.Information);
+    }
+
     private async Task StartUsbAsync(Func<bool>? stillWanted, string? deviceSerial)
     {
         var adb = new AdbService(deviceSerial ?? SelectedUsbSerial);
         var diag = await adb.CheckAsync();
         Log(diag.ToDisplayString());
-        if (!diag.Ok || (stillWanted is not null && !stillWanted())) return;
+        if (!diag.Ok || (stillWanted is not null && !stillWanted()))
+        {
+            if (!diag.Ok && _session is null) _connectionState.Text = "USB device unavailable. Use USB setup help.";
+            return;
+        }
+        if (_usbAdb is { } currentAdb && currentAdb.HasSameSelectedDevice(adb) &&
+            _session is { } currentSession && _relay.IsRunning && _socksRelay.Port != 0)
+        {
+            var existingHealth = await currentSession.Transport.ProbeHealthAsync(currentSession.Token);
+            if (existingHealth.Ok)
+            {
+                Log("USB_ALREADY_CONNECTED: The selected tablet is already connected.");
+                return;
+            }
+        }
         var (forward, localPort) = await adb.AllocateForwardAsync(10889);
         Log(forward.ToDisplayString());
         if (!forward.Ok) return;
@@ -380,7 +511,11 @@ public sealed class MainForm : Form
             var transport = LimitTransport(new TcpPhoneTransport("127.0.0.1", localPort, framedUsb: true));
             var health = await transport.ProbeHealthAsync(null);
             Log(health.ToDisplayString());
-            if (!health.Ok || (stillWanted is not null && !stillWanted())) return;
+            if (!health.Ok || (stillWanted is not null && !stillWanted()))
+            {
+                if (!health.Ok && _session is null) _connectionState.Text = "The Android USB bridge did not respond. Use USB setup help.";
+                return;
+            }
 
             await PrepareForConnectionChangeAsync();
             if (stillWanted is not null && !stillWanted()) return;
@@ -393,7 +528,7 @@ public sealed class MainForm : Form
         }
         finally
         {
-            if (!transferred) Log((await adb.ReleaseOwnedForwardAsync()).ToDisplayString());
+            if (!transferred) await ReleaseOrRememberUsbForwardAsync(adb);
         }
     }
 
@@ -446,11 +581,34 @@ public sealed class MainForm : Form
 
     private async Task StartBluetoothBridgeAsync()
     {
-        if (_bluetoothDevice.SelectedItem is not BluetoothPeer peer) { Log("BLUETOOTH_DEVICE_REQUIRED: Refresh and select a paired Android device."); return; }
+        if (!string.IsNullOrWhiteSpace(_bluetoothPairingPayload.Text))
+        {
+            if (!PairingPayloadParser.TryParse(_bluetoothPairingPayload.Text, out var parsed, out var error))
+            {
+                _connectionState.Text = "Bluetooth pairing details could not be loaded.";
+                Log(error);
+                return;
+            }
+            _token.Text = parsed.Token;
+            _fingerprint.Text = parsed.Fingerprint;
+        }
+        if (_bluetoothDevice.SelectedItem is not BluetoothPeer peer)
+        {
+            _connectionState.Text = "Choose a paired Bluetooth device.";
+            Log("BLUETOOTH_DEVICE_REQUIRED: Refresh and select a paired Android device.");
+            return;
+        }
         var fingerprint = _fingerprint.Text.Trim();
         if (fingerprint.Length != 64 || !fingerprint.All(Uri.IsHexDigit) || string.IsNullOrWhiteSpace(_token.Text))
-        { Log("BLUETOOTH_PAIRING_REQUIRED: Load the Android pairing token and certificate fingerprint first."); return; }
-        var session = new PhoneBridgeSession(LimitTransport(new BluetoothRfcommTransport(peer.Id, fingerprint)), _token.Text.Trim());
+        {
+            _connectionState.Text = "Paste the pairing details from the Android app.";
+            Log("BLUETOOTH_PAIRING_REQUIRED: Load the Android pairing token and certificate fingerprint first.");
+            return;
+        }
+        var transport = new BluetoothRfcommTransport(peer.Id, fingerprint);
+        var pairingToken = _token.Text.Trim();
+        var session = new PhoneBridgeSession(LimitTransport(transport), pairingToken,
+            BluetoothHealthAsync: _autoReconnectBluetooth.Checked ? token => transport.ProbeHealthAsync(pairingToken, token) : null);
         await SwitchToWirelessSessionAsync(session, "Bluetooth Bridge");
     }
 
@@ -459,21 +617,26 @@ public sealed class MainForm : Form
         var health = await ConnectionTransition.PrepareIfReadyAsync(
             () => candidate.Transport.ProbeHealthAsync(candidate.Token), PrepareForConnectionChangeAsync);
         Log(health.ToDisplayString());
-        if (!health.Ok) return;
+        if (!health.Ok)
+        {
+            if (_session is null) _connectionState.Text = $"{modeName} did not respond. See Advanced > Logs.";
+            return;
+        }
 
         _session = candidate;
         await EnableLocalRelayAndProxyAsync(candidate, modeName);
     }
 
+    private Task OpenBluetoothPanSettingsAsync()
+    {
+        Log("BLUETOOTH_PAN_SETUP: Enable Bluetooth tethering on the phone. In Windows Devices, expand the phone, then choose Personal Area Network > Join > Access Point.");
+        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("ms-settings:bluetooth") { UseShellExecute = true });
+        return Task.CompletedTask;
+    }
+
     private Task StartBluetoothPanAsync()
     {
-        var pan = new BluetoothPanInspector();
-        var result = pan.CheckPanAvailability();
-        Log(result.ToDisplayString());
-        foreach (var wifiResult in new WifiHotspotInspector().Check()) Log(wifiResult.ToDisplayString());
-        Log("BLUETOOTH_GUIDANCE: Select a paired device for Bluetooth Bridge, or use PAN with the phone's reachable address.");
-        if (result.Ok)
-            Log("PAN_ROUTE_OK: Use Wi-Fi Bridge with the phone's PAN IP, or use native Bluetooth tethering if Windows reports Internet access.");
+        Log(new BluetoothPanInspector().CheckPanAvailability().ToDisplayString());
         return Task.CompletedTask;
     }
 
@@ -559,7 +722,7 @@ public sealed class MainForm : Form
             applyingProxy = true;
             WindowsProxySettings.EnableLocalProxy("127.0.0.1", LocalHttpProxyPort);
             Log("WINDOWS_PROXY_ENABLED: Windows current-user proxy now points to local relay.");
-            _connectionState.Text = $"State: connected via {modeName}; Windows proxy -> 127.0.0.1:{LocalHttpProxyPort}; SOCKS5 -> 127.0.0.1:{LocalSocks5Port}";
+            _connectionState.Text = $"{modeName} connected. Proxy ready for supported Windows apps.";
             StartSessionMonitorAsync(session);
             await PollStatusAsync(silent: true);
         }, async () =>
@@ -573,6 +736,33 @@ public sealed class MainForm : Form
                 throw new IOException("The connection still needs cleanup. Review the proxy settings.");
             _connectionState.Text = "State: connection setup failed";
         });
+    }
+
+    private async Task TestBridgeInternetAsync()
+    {
+        if (_session is null || !_relay.IsRunning || _socksRelay.Port == 0)
+        {
+            _connectionState.Text = "Connect the USB or Bluetooth bridge first.";
+            return;
+        }
+        _connectionState.Text = "Checking internet access through the bridge proxy...";
+        try
+        {
+            using var handler = new HttpClientHandler
+            {
+                Proxy = new System.Net.WebProxy($"http://127.0.0.1:{LocalHttpProxyPort}"),
+                UseProxy = true, AllowAutoRedirect = false
+            };
+            using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(12) };
+            using var result = await client.GetAsync("https://example.com/", HttpCompletionOption.ResponseHeadersRead);
+            result.EnsureSuccessStatusCode();
+            _connectionState.Text = "Proxy internet verified. Apps that bypass the proxy still need a network connection.";
+        }
+        catch (Exception error)
+        {
+            _connectionState.Text = "The local proxy is ready, but the internet test failed. See Advanced > Logs.";
+            Log("PROXY_INTERNET_CHECK_FAILED: " + error.Message);
+        }
     }
 
     private async Task RestoreProxyAsync()
@@ -602,7 +792,7 @@ public sealed class MainForm : Form
             return;
         }
         await StopExistingAsync();
-        _connectionState.Text = restored ? "State: proxy restored / relay stopped" : "State: relay stopped; current proxy retained";
+        _connectionState.Text = restored ? "Disconnected. Previous proxy settings restored." : "Disconnected.";
         await PollStatusAsync(silent: true);
     }
 
@@ -706,7 +896,7 @@ public sealed class MainForm : Form
         _session = null;
         var adb = _usbAdb;
         _usbAdb = null;
-        if (adb is not null) Log((await adb.ReleaseOwnedForwardAsync()).ToDisplayString());
+        if (adb is not null) await ReleaseOrRememberUsbForwardAsync(adb);
     }
 
     private async Task PrepareForConnectionChangeAsync()
@@ -738,7 +928,9 @@ public sealed class MainForm : Form
                 try
                 {
                     await Task.Delay(TimeSpan.FromSeconds(5), ct);
-                    var health = await session.Transport.ProbeHealthAsync(session.Token);
+                    var health = session.BluetoothHealthAsync is { } probeBluetooth
+                        ? await probeBluetooth(ct)
+                        : await session.Transport.ProbeHealthAsync(session.Token);
                     if (health.Ok)
                     {
                         if (consecutiveFailures > 0) Log("PHONE_BRIDGE_HEALTH_RECOVERED: Health check passed after transient failures.");
@@ -748,6 +940,19 @@ public sealed class MainForm : Form
                     }
 
                     lastFailure = health.ToDisplayString();
+                    if (session.BluetoothHealthAsync is { } bluetoothRecovery)
+                    {
+                        Log("BLUETOOTH_RECONNECTING: Retrying the selected phone. Disconnect cancels these retries.");
+                        var recovered = await BluetoothConnectionRecovery.RetryAsync(bluetoothRecovery, ct);
+                        if (recovered.Ok)
+                        {
+                            Log("BLUETOOTH_RECONNECTED: New connections can use the bridge again.");
+                            consecutiveFailures = 0;
+                            continue;
+                        }
+                        BeginRestoreAfterSessionLoss(session, "BLUETOOTH_RECONNECT_FAILED: " + recovered.ToDisplayString());
+                        return;
+                    }
                     DiagnosticResult? reconnect = null;
                     await _actionGate.RunAsync(async () =>
                     {
@@ -908,6 +1113,7 @@ public sealed class MainForm : Form
                     Log("APP_CLOSING_RESTORE: Restoring proxy before exit.");
                     await RestoreProxyAsync();
                 }
+                await RetryUsbCleanupAsync();
                 return !_relay.IsRunning || !WindowsProxySettings.ReferencesLocalProxy("127.0.0.1", LocalHttpProxyPort);
             });
             _closeLifecycle.Complete(mayClose);

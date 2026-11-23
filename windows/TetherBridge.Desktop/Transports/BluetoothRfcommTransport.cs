@@ -39,7 +39,9 @@ public sealed class BluetoothRfcommTransport(string deviceId, string fingerprint
         return found.Select(item => new BluetoothPeer(item.Id, string.IsNullOrWhiteSpace(item.Name) ? "Unnamed Bluetooth device" : item.Name)).ToArray();
     }
 
-    public Task<Stream> ConnectAsync(CancellationToken token) => ConnectCoreAsync(token, null);
+    public Task<Stream> ConnectAsync(CancellationToken token) =>
+        BluetoothConnectionRecovery.OpenWithDeadlineAsync(
+            deadline => ConnectCoreAsync(deadline, null), TimeSpan.FromSeconds(15), token);
 
     private async Task<Stream> ConnectCoreAsync(CancellationToken token, int? controlSlot)
     {
@@ -82,15 +84,26 @@ public sealed class BluetoothRfcommTransport(string deviceId, string fingerprint
                 return new FramedUsbStream(new TlsPhoneStream(tls));
             } catch { await tls.DisposeAsync(); throw; }
         }
-        catch { socket?.Dispose(); service?.Dispose(); device?.Dispose(); if (!ownershipTransferred) release(); throw; }
+        catch
+        {
+            // A failure disposing one WinRT object must not prevent the slot from being returned.
+            try { socket?.Dispose(); } catch { }
+            try { service?.Dispose(); } catch { }
+            try { device?.Dispose(); } catch { }
+            if (!ownershipTransferred) release();
+            throw;
+        }
     }
 
-    public Task<DiagnosticResult> ProbeHealthAsync(string? token) => ProbeAsync("/health", token);
+    public Task<DiagnosticResult> ProbeHealthAsync(string? token) => ProbeHealthAsync(token, CancellationToken.None);
+    public Task<DiagnosticResult> ProbeHealthAsync(string? token, CancellationToken cancellationToken) =>
+        ProbeAsync("/health", token, cancellationToken);
     public Task<DiagnosticResult> ProbeStatusAsync(string? token) => ProbeAsync("/status", token);
-    private async Task<DiagnosticResult> ProbeAsync(string path, string? token)
+    private async Task<DiagnosticResult> ProbeAsync(string path, string? token, CancellationToken cancellationToken = default)
     {
         try {
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(TimeSpan.FromSeconds(15));
             await using var stream = await ConnectCoreAsync(timeout.Token, path == "/health" ? 6 : 7);
             var request = Encoding.ASCII.GetBytes($"GET {path} HTTP/1.1\r\nHost: phone\r\nX-TetherBridge-Token: {token}\r\nConnection: close\r\n\r\n");
             await stream.WriteAsync(request, timeout.Token); await stream.FlushAsync(timeout.Token);
@@ -98,7 +111,9 @@ public sealed class BluetoothRfcommTransport(string deviceId, string fingerprint
             if (!response.StartsWith("HTTP/1.1 200 ", StringComparison.Ordinal)) return DiagnosticResult.Fail("BLUETOOTH_PHONE_BAD_RESPONSE", "Bluetooth bridge rejected the request.", "Bluetooth probe", "Check pairing token and restart the Android bridge.");
             var offset = response.IndexOf("\r\n\r\n", StringComparison.Ordinal);
             return DiagnosticResult.Pass(path == "/status" ? "PHONE_STATUS_OK" : "PHONE_PROXY_OK", offset >= 0 ? response[(offset + 4)..] : "Bluetooth bridge is reachable.", "Bluetooth probe");
-        } catch (Exception ex) { return DiagnosticResult.Fail("BLUETOOTH_PHONE_DOWN", $"Bluetooth bridge is unavailable: {ex.Message}", "Bluetooth probe", "Pair the devices and start Bluetooth Bridge on Android."); }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (Exception ex) { return DiagnosticResult.Fail("BLUETOOTH_PHONE_DOWN", $"Bluetooth bridge is unavailable: {ex.Message}", "Bluetooth probe", "Pair the devices and start Bluetooth Bridge on Android."); }
     }
 
     private sealed class RfcommStream(StreamSocket socket, RfcommDeviceService service, BluetoothDevice device, Action release) : Stream

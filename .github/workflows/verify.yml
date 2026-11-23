@@ -1,0 +1,68 @@
+name: Build and verify
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6
+        with:
+          global-json-file: global.json
+          dotnet-version: '10.0.x'
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - name: Build Windows and Tunnel Lab
+        run: dotnet build windows/TetherBridge.TunnelLab -c Release
+      - name: Run repository regressions
+        run: python scripts/run-regression-tests.py
+      - name: Run relay and simulated phone checks
+        shell: pwsh
+        run: |
+          dotnet build tests/RelayTests -c Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet run --no-build -c Release --project tests/RelayTests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          foreach ($probe in 'bluetooth-recovery-test', 'usb-cleanup-retry-test', 'relay-startup-rollback-test', 'tunnel-dns-preflight-test', 'tunnel-command-test') {
+            dotnet run --no-build -c Release --project tests/RelayTests -- $probe
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+      - name: Build and verify both Windows installer packages
+        shell: pwsh
+        run: .\scripts\build-release-windows.ps1 -OutputDirectory "$env:RUNNER_TEMP\tetherbridge-windows"
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: Windows-test-packages
+          path: ${{ runner.temp }}/tetherbridge-windows/
+          if-no-files-found: error
+
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install SDK components
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - name: Build Android and run unit tests
+        run: bash ./gradlew --no-daemon :android:app:testDebugUnitTest :android:app:assembleDebug
+      - name: Verify debug APK signature
+        run: '"$ANDROID_HOME/build-tools/35.0.0/apksigner" verify android/app/build/outputs/apk/debug/app-debug.apk'
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: Android-debug-APK
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error

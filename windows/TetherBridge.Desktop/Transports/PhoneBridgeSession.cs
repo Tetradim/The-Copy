@@ -5,7 +5,8 @@ namespace TetherBridge.Desktop.Transports;
 public sealed record PhoneBridgeSession(
     IPhoneTransport Transport,
     string? Token,
-    Func<Task<DiagnosticResult>>? ReconnectAsync = null)
+    Func<Task<DiagnosticResult>>? ReconnectAsync = null,
+    Func<CancellationToken, Task<DiagnosticResult>>? BluetoothHealthAsync = null)
 {
     public async Task<DiagnosticResult?> TryReconnectAsync()
     {

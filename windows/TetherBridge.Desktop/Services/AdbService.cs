@@ -8,6 +8,7 @@ public sealed class AdbService
     private const string UsbPairingProviderUri = "content://org.tetherbridge.classicapp.usbpairing/pairing";
     private static readonly TimeSpan AdbCommandTimeout = TimeSpan.FromSeconds(10);
     private (string Serial, int LocalPort, int PhonePort)? _ownedForward;
+    private readonly SemaphoreSlim _forwardGate = new(1, 1);
     private readonly string? _requestedSerial;
     private string? _resolvedSerial;
     private readonly Func<string?> _resolveAdb;
@@ -48,6 +49,9 @@ public sealed class AdbService
         }
         return await _run(adb, $"-s {_resolvedSerial} {args}");
     }
+
+    internal bool HasSameSelectedDevice(AdbService other) =>
+        _resolvedSerial is not null && string.Equals(_resolvedSerial, other._resolvedSerial, StringComparison.Ordinal);
 
     public async Task<DiagnosticResult> CheckAsync()
     {
@@ -91,33 +95,53 @@ public sealed class AdbService
 
     public async Task<(DiagnosticResult Result, int Port)> AllocateForwardAsync(int phonePort)
     {
-        var adb = _resolveAdb();
-        if (adb is null)
-            return (DiagnosticResult.Fail("ADB_NOT_FOUND", "ADB is not installed, bundled, or discoverable in the Android SDK.", "adb resolver", "Install Android platform-tools."), 0);
-        var selected = await SelectDeviceAsync();
-        if (!selected.Ok || _resolvedSerial is null) return (selected, 0);
-        var serial = _resolvedSerial;
-        var allocation = await AdbForwardAllocator.CreateAsync(phonePort, args => _run(adb, $"-s {serial} {args}"));
-        if (allocation.Result.Ok) _ownedForward = (serial, allocation.Port, phonePort);
-        return allocation;
+        await _forwardGate.WaitAsync();
+        try
+        {
+            if (_ownedForward is not null)
+                return (DiagnosticResult.Fail("ADB_FORWARD_ALREADY_OWNED", "This session already owns a USB forward.",
+                    "ADB forward allocation", "Release the previous forward before requesting another."), 0);
+            var adb = _resolveAdb();
+            if (adb is null)
+                return (DiagnosticResult.Fail("ADB_NOT_FOUND", "ADB is not installed, bundled, or discoverable in the Android SDK.",
+                    "adb resolver", "Install Android platform-tools."), 0);
+            var selected = await SelectDeviceAsync();
+            if (!selected.Ok || _resolvedSerial is null) return (selected, 0);
+            var serial = _resolvedSerial;
+            var allocation = await AdbForwardAllocator.CreateAsync(phonePort, args => _run(adb, $"-s {serial} {args}"));
+            if (allocation.Result.Ok) _ownedForward = (serial, allocation.Port, phonePort);
+            return allocation;
+        }
+        finally { _forwardGate.Release(); }
     }
 
     public async Task<DiagnosticResult> ReleaseOwnedForwardAsync()
     {
-        var owned = _ownedForward;
-        _ownedForward = null;
-        if (owned is null) return DiagnosticResult.Pass("ADB_FORWARD_NONE", "No owned USB forward to remove.");
-        var adb = _resolveAdb();
-        if (adb is null) return DiagnosticResult.Fail("ADB_NOT_FOUND", "Could not remove the USB forward.", "adb resolver", "Install Android platform-tools.");
-        var list = await _run(adb, "forward --list");
-        if (list.ExitCode != 0) return DiagnosticResult.Fail("ADB_FORWARD_LIST_FAILED", "Could not check the owned USB forward.", "adb forward --list", CleanAdbError(list.StdErr));
-        var mapping = owned.Value;
-        if (!AdbForwardAllocator.IsOwnedMapping(list.StdOut, mapping.Serial, mapping.LocalPort, mapping.PhonePort))
-            return DiagnosticResult.Pass("ADB_FORWARD_GONE", "The owned USB forward is no longer present; nothing was removed.");
-        var result = await _run(adb, $"-s {mapping.Serial} forward --remove tcp:{mapping.LocalPort}");
-        return result.ExitCode == 0
-            ? DiagnosticResult.Pass("ADB_FORWARD_REMOVED", "Removed the USB forward created by this session.")
-            : DiagnosticResult.Fail("ADB_FORWARD_REMOVE_FAILED", "Could not remove the USB forward created by this session.", "adb forward --remove", CleanAdbError(result.StdErr));
+        await _forwardGate.WaitAsync();
+        try
+        {
+            if (_ownedForward is not { } mapping)
+                return DiagnosticResult.Pass("ADB_FORWARD_NONE", "No owned USB forward to remove.");
+            var adb = _resolveAdb();
+            if (adb is null)
+                return DiagnosticResult.Fail("ADB_NOT_FOUND", "Could not remove the USB forward.", "adb resolver", "Install Android platform-tools.");
+            var list = await _run(adb, "forward --list");
+            if (list.ExitCode != 0)
+                return DiagnosticResult.Fail("ADB_FORWARD_LIST_FAILED", "Could not check the owned USB forward.", "adb forward --list", CleanAdbError(list.StdErr));
+            if (!AdbForwardAllocator.IsOwnedMapping(list.StdOut, mapping.Serial, mapping.LocalPort, mapping.PhonePort))
+            {
+                _ownedForward = null;
+                return DiagnosticResult.Pass("ADB_FORWARD_GONE", "The owned USB forward is no longer present; nothing was removed.");
+            }
+
+            var result = await _run(adb, $"-s {mapping.Serial} forward --remove tcp:{mapping.LocalPort}");
+            if (result.ExitCode != 0)
+                return DiagnosticResult.Fail("ADB_FORWARD_REMOVE_FAILED", "Could not remove the USB forward created by this session.",
+                    "adb forward --remove", CleanAdbError(result.StdErr));
+            _ownedForward = null;
+            return DiagnosticResult.Pass("ADB_FORWARD_REMOVED", "Removed the USB forward created by this session.");
+        }
+        finally { _forwardGate.Release(); }
     }
 
     public async Task<DiagnosticResult> ForwardListAsync()

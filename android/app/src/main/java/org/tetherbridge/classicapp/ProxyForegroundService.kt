@@ -11,6 +11,7 @@ import android.os.PowerManager
 import android.util.Log
 
 class ProxyForegroundService : Service() {
+    private var activeConfig: ProxyConfig? = null
     private var proxy: HttpConnectProxy? = null
     private var usbFrames: FramedUsbServer? = null
     private var bluetooth: BluetoothRfcommServer? = null
@@ -35,9 +36,15 @@ class ProxyForegroundService : Service() {
                     throw ex
                 }
                 try {
-                    startProxy(config)
+                    if (activeConfig?.canReuseUsb(config, proxy?.isListening == true, usbFrames?.isListening == true) != true)
+                        startProxy(config)
+                    else
+                        Log.i(TAG, "USB_START_ALREADY_RUNNING")
                     acquireBridgeWakeLock(mode)
-                    reportState("Bridge running: $mode\nPhone port: ${config.listenHost}:${config.listenPort}")
+                    val detail = if (mode == BridgeMode.USB)
+                        "Connect with USB Bridge in the Windows app. Windows manages the USB port automatically."
+                    else "Phone port: ${config.listenHost}:${config.listenPort}"
+                    reportState("Bridge running: $mode\n$detail")
                 } catch (ex: Exception) {
                     Log.e(TAG, "BRIDGE_START_FAILED mode=$mode", ex)
                     reportState("Bridge could not start: ${ex.message ?: ex.javaClass.simpleName}")
@@ -65,13 +72,15 @@ class ProxyForegroundService : Service() {
         try {
             stopProxy()
             val authenticationRegistry = AuthenticatedSessionRegistry()
-            proxy = HttpConnectProxy(config) { port -> authenticationRegistry.markAuthenticated(port) }.also { it.start() }
+            val backend = HttpConnectProxy(config) { port -> authenticationRegistry.markAuthenticated(port) }
+            proxy = backend
+            backend.start()
             if (config.mode == BridgeMode.USB || config.mode == BridgeMode.BLUETOOTH_RFCOMM) {
                 lateinit var frames: FramedUsbServer
                 val secure = config.mode == BridgeMode.BLUETOOTH_RFCOMM
                 frames = FramedUsbServer(
                     listenPort = if (secure) 10891 else FramedUsbServer.PORT,
-                    backendPort = if (secure) 10892 else ProxyConfig.USB_HTTP_PORT,
+                    backendPort = backend.boundPort,
                     secure = secure,
                     authSessions = authenticationRegistry,
                     onFatal = { error ->
@@ -101,6 +110,7 @@ class ProxyForegroundService : Service() {
                 bluetooth = instance
                 instance.start()
             }
+            activeConfig = config
         } catch (ex: Exception) {
             Log.e(TAG, "PROXY_START_FAILED mode=${config.mode} listen=${config.listenHost}:${config.listenPort} error=${ex.javaClass.simpleName}: ${ex.message}", ex)
             stopProxy()
@@ -109,6 +119,7 @@ class ProxyForegroundService : Service() {
     }
 
     private fun stopProxy() {
+        activeConfig = null
         Log.i(TAG, "PROXY_STOP")
         val oldBluetooth = bluetooth; bluetooth = null; oldBluetooth?.stop()
         val oldFrames = usbFrames; usbFrames = null; oldFrames?.stop()

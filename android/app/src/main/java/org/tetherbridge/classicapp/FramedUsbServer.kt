@@ -27,6 +27,7 @@ class FramedUsbServer(
     private val sockets = ConcurrentHashMap.newKeySet<Socket>()
     private val deadlines = java.util.concurrent.ScheduledThreadPoolExecutor(1)
     private val workers = ThreadPoolExecutor(0, 32, 30, TimeUnit.SECONDS, SynchronousQueue<Runnable>(), ThreadPoolExecutor.AbortPolicy())
+    private var lastSaturationLog = -5_000L
     private var listener: ServerSocket? = null
     private var acceptThread: Thread? = null
 
@@ -51,7 +52,15 @@ class FramedUsbServer(
                     sockets.add(client)
                     if (!running.get()) { sockets.remove(client); client.close(); continue }
                     try { workers.execute { session(client) } }
-                    catch (_: Exception) { sockets.remove(client); client.close() }
+                    catch (_: java.util.concurrent.RejectedExecutionException) {
+                        sockets.remove(client)
+                        client.close()
+                        val now = android.os.SystemClock.elapsedRealtime()
+                        if (running.get() && now - lastSaturationLog >= 5_000) {
+                            lastSaturationLog = now
+                            Log.w(TAG, "USB_FRAME_POOL_BUSY port=$listenPort active=${workers.activeCount} capacity=${workers.maximumPoolSize}")
+                        }
+                    }
                 } catch (ex: Exception) {
                     if (running.get()) { Log.w(TAG, "FRAME_ACCEPT_ERROR: ${ex.message}"); stop(); onFatal(ex.javaClass.simpleName) }
                 }

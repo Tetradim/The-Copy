@@ -24,6 +24,7 @@ public sealed class MainForm : Form
     private readonly TextBox _fingerprint = new() { Width = 600 };
     private readonly ComboBox _bluetoothDevice = new() { Width = 520, DropDownStyle = ComboBoxStyle.DropDownList };
     private readonly ComboBox _connectionType = new() { Width = 220, DropDownStyle = ComboBoxStyle.DropDownList, AccessibleName = "Connection type" };
+    private readonly Dictionary<string, PairingPayload> _bluetoothPairings = new(StringComparer.OrdinalIgnoreCase);
     private readonly TextBox _bluetoothPairingPayload = new() { Width = 640, AccessibleName = "Android Bluetooth pairing details" };
     private readonly ComboBox _usbDevice = new() { Width = 520, DropDownStyle = ComboBoxStyle.DropDownList };
     private readonly Label _connectionState = new() { Width = 780, Height = 48, Text = "Disconnected" };
@@ -187,7 +188,8 @@ public sealed class MainForm : Form
         _bluetoothDevice.AccessibleName = "Paired Bluetooth device";
         bluetooth.Controls.Add(_bluetoothDevice);
         bluetooth.Controls.Add(Button("Refresh paired devices", RefreshBluetoothDevicesAsync, width: 180));
-        bluetooth.Controls.Add(new Label { Text = "Paste the pairing details shown on the Android app.", Width = 750, Height = 24 });
+        bluetooth.Controls.Add(Button("Pair with phone", PairBluetoothAsync, width: 180));
+        bluetooth.Controls.Add(new Label { Text = "On Android, tap Pair with PC and approve this computer. Manual payload is optional.", Width = 750, Height = 24 });
         bluetooth.Controls.Add(_bluetoothPairingPayload);
         bluetooth.Controls.Add(_autoReconnectBluetooth);
         root.Controls.Add(bluetooth);
@@ -579,8 +581,32 @@ public sealed class MainForm : Form
         Log($"BLUETOOTH_PAIRED: Found {peers.Count} paired Bluetooth devices.");
     }
 
+    private async Task PairBluetoothAsync()
+    {
+        if (_bluetoothDevice.SelectedItem is not BluetoothPeer peer)
+        {
+            _connectionState.Text = "Choose a paired Bluetooth device first.";
+            return;
+        }
+        _connectionState.Text = "Waiting for approval on the phone. Open TetherBridge and tap Pair with PC first.";
+        try
+        {
+            _bluetoothPairings[peer.Id] = await BluetoothRfcommTransport.RequestPairingAsync(peer.Id);
+            _bluetoothPairingPayload.Clear();
+            _connectionState.Text = "Phone approved. Start Bluetooth Bridge on Android, then click Connect.";
+        }
+        catch (Exception ex)
+        {
+            _connectionState.Text = ex is EndOfStreamException or OperationCanceledException
+                ? "Bluetooth pairing was declined, disconnected, or timed out."
+                : "Bluetooth pairing failed. Open the Android app and tap Pair with PC, then try again.";
+            Log($"BLUETOOTH_PAIRING_FAILED: {ex.GetType().Name}");
+        }
+    }
+
     private async Task StartBluetoothBridgeAsync()
     {
+        PairingPayload? manualPairing = null;
         if (!string.IsNullOrWhiteSpace(_bluetoothPairingPayload.Text))
         {
             if (!PairingPayloadParser.TryParse(_bluetoothPairingPayload.Text, out var parsed, out var error))
@@ -589,8 +615,7 @@ public sealed class MainForm : Form
                 Log(error);
                 return;
             }
-            _token.Text = parsed.Token;
-            _fingerprint.Text = parsed.Fingerprint;
+            manualPairing = parsed;
         }
         if (_bluetoothDevice.SelectedItem is not BluetoothPeer peer)
         {
@@ -598,15 +623,16 @@ public sealed class MainForm : Form
             Log("BLUETOOTH_DEVICE_REQUIRED: Refresh and select a paired Android device.");
             return;
         }
-        var fingerprint = _fingerprint.Text.Trim();
-        if (fingerprint.Length != 64 || !fingerprint.All(Uri.IsHexDigit) || string.IsNullOrWhiteSpace(_token.Text))
+        var pairing = manualPairing ?? _bluetoothPairings.GetValueOrDefault(peer.Id);
+        var fingerprint = pairing?.Fingerprint ?? _fingerprint.Text.Trim();
+        var pairingToken = pairing?.Token ?? _token.Text.Trim();
+        if (fingerprint.Length != 64 || !fingerprint.All(Uri.IsHexDigit) || string.IsNullOrWhiteSpace(pairingToken))
         {
-            _connectionState.Text = "Paste the pairing details from the Android app.";
+            _connectionState.Text = "Tap Pair with PC on Android, then click Pair with phone here.";
             Log("BLUETOOTH_PAIRING_REQUIRED: Load the Android pairing token and certificate fingerprint first.");
             return;
         }
         var transport = new BluetoothRfcommTransport(peer.Id, fingerprint);
-        var pairingToken = _token.Text.Trim();
         var session = new PhoneBridgeSession(LimitTransport(transport), pairingToken,
             BluetoothHealthAsync: _autoReconnectBluetooth.Checked ? token => transport.ProbeHealthAsync(pairingToken, token) : null);
         await SwitchToWirelessSessionAsync(session, "Bluetooth Bridge");

@@ -8,7 +8,7 @@
 Desktop proxy mode has passed isolated Samsung tests. Full-computer routing, automatic system DNS, and Wi-Fi Share are experimental Tunnel Lab features awaiting live validation. See the [tunnel lab instructions](docs/full-tunnel-design.md) for the required test setup.
 
 
-> **Current test builds: Windows 0.6.12 and Android 0.6.8.** Desktop proxy mode supports framed USB, encrypted Wi-Fi and Bluetooth. Full routing, system DNS and Wi-Fi Share are experimental Tunnel Lab features awaiting live validation. See [test results](docs/parity-progress.md) and the [build and release guide](docs/release-maintenance.md). The older version notes below are historical.
+> **Current test builds: Windows 0.6.13 and Android 0.6.9.** Desktop proxy mode supports framed USB, encrypted Wi-Fi and Bluetooth. Full routing, system DNS and Wi-Fi Share are experimental Tunnel Lab features awaiting live validation. See [test results](docs/parity-progress.md) and the [build and release guide](docs/release-maintenance.md). The older version notes below are historical.
 
 # TetherBridge Classic — Clean-room v0.6.2
 

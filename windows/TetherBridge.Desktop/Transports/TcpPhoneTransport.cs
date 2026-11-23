@@ -10,9 +10,22 @@ namespace TetherBridge.Desktop.Transports;
 
 public sealed class TcpPhoneTransport(string host, int port, string? fingerprint = null, bool framedUsb = false) : IPhoneTransport
 {
+    // Android 0.6.8 has 32 framed USB workers. Leave room for health and status
+    // checks and for the phone to finish closing recently released connections.
+    private readonly SemaphoreSlim? _usbDataSlots = framedUsb ? new(28, 28) : null;
+    private readonly SemaphoreSlim _usbControl = new(1, 1);
+
     public string DisplayName => $"TCP {host}:{port}";
 
     public async Task<Stream> ConnectAsync(CancellationToken cancellationToken)
+    {
+        if (_usbDataSlots is null) return await OpenAsync(cancellationToken);
+        await _usbDataSlots.WaitAsync(cancellationToken);
+        try { return await OpenAsync(cancellationToken, () => _usbDataSlots.Release()); }
+        catch { _usbDataSlots.Release(); throw; }
+    }
+
+    private async Task<Stream> OpenAsync(CancellationToken cancellationToken, Action? release = null)
     {
         var socket = new Socket(SocketType.Stream, ProtocolType.Tcp)
         {
@@ -21,7 +34,7 @@ public sealed class TcpPhoneTransport(string host, int port, string? fingerprint
         try
         {
             await socket.ConnectAsync(host, port, cancellationToken);
-            if (fingerprint is null) { var raw = new HalfCloseNetworkStream(socket); return framedUsb ? new FramedUsbStream(raw) : raw; }
+            if (fingerprint is null) { var raw = new HalfCloseNetworkStream(socket); return framedUsb ? new FramedUsbStream(raw, release) : raw; }
             if (framedUsb) throw new ArgumentException("Wireless TLS and framed USB are separate transports.");
             if (fingerprint.Length != 64 || !fingerprint.All(Uri.IsHexDigit))
                 throw new ArgumentException("A valid SHA-256 certificate fingerprint is required.");
@@ -89,24 +102,36 @@ public sealed class TcpPhoneTransport(string host, int port, string? fingerprint
         try
         {
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
-            await using var s = await ConnectAsync(cts.Token);
-            var header = $"GET {path} HTTP/1.1\r\nHost: phone\r\n" +
-                         (string.IsNullOrWhiteSpace(token) ? "" : $"X-TetherBridge-Token: {token}\r\n") +
-                         "Connection: close\r\n\r\n";
-            var bytes = Encoding.ASCII.GetBytes(header);
-            await s.WriteAsync(bytes, cts.Token);
-            await s.FlushAsync(cts.Token);
-
-            var text = await HttpProbeResponseReader.ReadAsync(s, cts.Token);
-            bytesRead = Encoding.UTF8.GetByteCount(text);
-            sw.Stop();
-            return new ProbeResult(text, null, ProbeSummary(path, sw.Elapsed, bytesRead), ResponseSummary(text, bytesRead, sw.Elapsed), bytesRead, sw.Elapsed);
+            if (framedUsb) await _usbControl.WaitAsync(cts.Token);
+            try
+            {
+                var response = await ReadProbeAsync(path, token, cts.Token);
+                bytesRead = Encoding.UTF8.GetByteCount(response);
+                sw.Stop();
+                return new ProbeResult(response, null, ProbeSummary(path, sw.Elapsed, bytesRead), ResponseSummary(response, bytesRead, sw.Elapsed), bytesRead, sw.Elapsed);
+            }
+            finally
+            {
+                if (framedUsb) _usbControl.Release();
+            }
         }
         catch (Exception ex)
         {
             sw.Stop();
             return new ProbeResult(string.Empty, ex, ProbeSummary(path, sw.Elapsed, bytesRead), $"response-bytes={bytesRead}, durationMs={(long)sw.Elapsed.TotalMilliseconds}", bytesRead, sw.Elapsed);
         }
+    }
+
+    private async Task<string> ReadProbeAsync(string path, string? token, CancellationToken cancellationToken)
+    {
+        await using var s = await OpenAsync(cancellationToken);
+        var header = $"GET {path} HTTP/1.1\r\nHost: phone\r\n" +
+                     (string.IsNullOrWhiteSpace(token) ? "" : $"X-TetherBridge-Token: {token}\r\n") +
+                     "Connection: close\r\n\r\n";
+        var bytes = Encoding.ASCII.GetBytes(header);
+        await s.WriteAsync(bytes, cancellationToken);
+        await s.FlushAsync(cancellationToken);
+        return await HttpProbeResponseReader.ReadAsync(s, cancellationToken);
     }
 
     private static bool HasStatus(string response, int status)

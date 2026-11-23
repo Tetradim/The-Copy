@@ -4,12 +4,13 @@ namespace TetherBridge.Desktop.Transports;
 
 // One TCP stream per request. Each record is a big-endian 32-bit length followed
 // by that many bytes; a zero length signals an orderly half-close in that direction.
-public sealed class FramedUsbStream(Stream inner) : Stream, IWriteHalfClose
+public sealed class FramedUsbStream(Stream inner, Action? release = null) : Stream, IWriteHalfClose
 {
     private const int MaxFrame = 32768;
     private readonly SemaphoreSlim _readLock = new(1, 1);
     private readonly SemaphoreSlim _writeLock = new(1, 1);
     private int _remaining;
+    private int _disposed;
     private bool _readEnded;
     private bool _writeEnded;
     public override bool CanRead => inner.CanRead;
@@ -75,6 +76,23 @@ public sealed class FramedUsbStream(Stream inner) : Stream, IWriteHalfClose
     }
     public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
     public override void SetLength(long value) => throw new NotSupportedException();
-    protected override void Dispose(bool disposing) { if (disposing) inner.Dispose(); base.Dispose(disposing); }
-    public override async ValueTask DisposeAsync() { await inner.DisposeAsync(); GC.SuppressFinalize(this); }
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing && Interlocked.Exchange(ref _disposed, 1) == 0)
+        {
+            try { inner.Dispose(); }
+            finally { release?.Invoke(); }
+        }
+        base.Dispose(disposing);
+    }
+
+    public override async ValueTask DisposeAsync()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) == 0)
+        {
+            try { await inner.DisposeAsync(); }
+            finally { release?.Invoke(); }
+        }
+        GC.SuppressFinalize(this);
+    }
 }

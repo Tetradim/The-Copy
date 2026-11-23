@@ -33,7 +33,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           dotnet run --no-build -c Release --project tests/RelayTests
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          foreach ($probe in 'bluetooth-recovery-test', 'usb-cleanup-retry-test', 'relay-startup-rollback-test', 'tunnel-dns-preflight-test', 'tunnel-command-test') {
+          foreach ($probe in 'usb-headroom-test', 'bluetooth-recovery-test', 'usb-cleanup-retry-test', 'relay-startup-rollback-test', 'tunnel-dns-preflight-test', 'tunnel-command-test') {
             dotnet run --no-build -c Release --project tests/RelayTests -- $probe
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }

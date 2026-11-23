@@ -16,7 +16,7 @@ public static class SupportBundleExporter
         var sb = new StringBuilder();
         sb.AppendLine("TetherBridge Classic support bundle");
         sb.AppendLine("Generated: " + DateTimeOffset.Now.ToString("O"));
-        sb.AppendLine("Version: 0.6.7");
+        sb.AppendLine("Version: " + System.Windows.Forms.Application.ProductVersion);
         sb.AppendLine();
         sb.AppendLine("Local relay:");
         sb.AppendLine(relaySnapshot.ToDisplayString());

@@ -15,3 +15,9 @@ Inspection date: 2026-11-17. The desktop labels below were observed in the user'
 | Hide Tether Usage (phone option) | Unimplemented and not equivalent to simply using a proxy. [PdaNet's published guidance](https://pdanet.co/help/devices.php) mentions the option, but does not specify its mechanism. Do not label TetherBridge as hiding or reclassifying carrier usage without evidence. |
 
 The user-supplied installer is `PdaNetA5232b.exe`; the installed binaries used for this read-only inventory are under `C:\Program Files (x86)\PdaNet for Android`. String presence alone does not prove the feature works on the user's current phone or reveal all settings and behavior.
+
+## USB failure investigated on Windows 0.6.12 and Android 0.6.8
+
+Read-only inspection of the installed PdaNet 5.23.2 desktop files found WinUSB pipe enumeration and read/write calls, ADB forwarding commands targeting a TCP port and a local abstract socket, and an NDIS miniport in pneteth.sys. This establishes the presence of a direct USB path, an ADB-capable path, and a Windows virtual adapter. It gives no measurement of PdaNet's connection limit, scheduling, or stream multiplexing. Seeing ADB support in the binary does not establish which path a particular PdaNet connection uses.
+
+On the Samsung USB link, a framed health request returned HTTP 200 with no load, returned EOF when 32 data sockets were held open, and returned HTTP 200 after one socket closed. This reproduces the symptom with TetherBridge's shared Android worker pool. Windows 0.6.13 queues data at 28 concurrent sessions and bypasses that queue for serialized health and status probes. Android 0.6.9 logs framed worker saturation. Long playback and real Bluetooth approval still require a live retest.

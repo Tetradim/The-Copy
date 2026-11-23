@@ -25,6 +25,7 @@ class MainActivity : Activity() {
     private lateinit var pairingText: TextView
     private lateinit var qrView: ImageView
     private lateinit var direct: WifiDirectController
+    private lateinit var bluetoothPairing: BluetoothPairing
     private var directHost: String? = null
     private val stateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -48,6 +49,7 @@ class MainActivity : Activity() {
             textSize = 16f
         }
 
+        bluetoothPairing = BluetoothPairing(this) { status.text = it }
         direct = WifiDirectController(this) { message, host ->
             if (!isFinishing && !isDestroyed) {
                 directHost = host
@@ -89,6 +91,14 @@ class MainActivity : Activity() {
         val bluetoothBridge = Button(this).apply {
             text = "Start Bluetooth Bridge"
             setOnClickListener { requestBluetoothStart() }
+        }
+        val pairBluetooth = Button(this).apply {
+            text = "Pair with PC"
+            setOnClickListener {
+                if (Build.VERSION.SDK_INT < 31 || checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED)
+                    bluetoothPairing.start()
+                else requestPermissions(arrayOf(Manifest.permission.BLUETOOTH_CONNECT), REQUEST_BLUETOOTH_PAIR)
+            }
         }
         val directStart = Button(this).apply {
             text = "Create Wi-Fi Direct Group"
@@ -142,6 +152,7 @@ class MainActivity : Activity() {
         layout.addView(usb)
         layout.addView(wifi)
         layout.addView(pan)
+        layout.addView(pairBluetooth)
         layout.addView(bluetoothBridge)
         layout.addView(directStart)
         layout.addView(directRefresh)
@@ -160,6 +171,11 @@ class MainActivity : Activity() {
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(stateReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
         else @Suppress("UnspecifiedRegisterReceiverFlag") registerReceiver(stateReceiver, filter)
         updatePairingViews(BridgeMode.WIFI)
+    }
+
+    override fun onStop() {
+        bluetoothPairing.stop()
+        super.onStop()
     }
 
     override fun onDestroy() {
@@ -267,6 +283,10 @@ class MainActivity : Activity() {
             if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) startBridge(BridgeMode.BLUETOOTH_RFCOMM)
             else status.text = "Bluetooth Bridge needs nearby-device permission."
         }
+        if (requestCode == REQUEST_BLUETOOTH_PAIR) {
+            if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) bluetoothPairing.start()
+            else status.text = "Bluetooth pairing needs nearby-device permission."
+        }
         if (requestCode == REQUEST_WIFI_DIRECT) {
             if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) direct.create()
             else status.text = "Wi-Fi Direct needs the requested nearby-device permission."
@@ -283,5 +303,6 @@ class MainActivity : Activity() {
         private const val REQUEST_NOTIFICATIONS = 6201
         private const val REQUEST_WIFI_DIRECT = 6202
         private const val REQUEST_BLUETOOTH = 6203
+        private const val REQUEST_BLUETOOTH_PAIR = 6204
     }
 }

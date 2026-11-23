@@ -5,6 +5,53 @@ using TetherBridge.Desktop.Services;
 using TetherBridge.Desktop.Transports;
 using TetherBridge.Desktop.FullTunnel;
 
+if (args.Length == 1 && args[0] == "usb-headroom-test")
+{
+    using var listener = new TcpListener(IPAddress.Loopback, 0);
+    listener.Start();
+    var transport = new TcpPhoneTransport("127.0.0.1", ((IPEndPoint)listener.LocalEndpoint).Port, framedUsb: true);
+    using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    var connections = new List<Stream>();
+    var phone = new List<TcpClient>();
+    try
+    {
+        for (var i = 0; i < 28; i++)
+        {
+            connections.Add(await transport.ConnectAsync(deadline.Token));
+            phone.Add(await listener.AcceptTcpClientAsync(deadline.Token));
+        }
+
+        var queued = transport.ConnectAsync(deadline.Token);
+        await Task.Delay(100, deadline.Token);
+        if (queued.IsCompleted || listener.Pending()) throw new Exception("Eligible control capacity was used by a 29th USB data connection.");
+
+        var health = transport.ProbeHealthAsync(null);
+        using (var check = await listener.AcceptTcpClientAsync(deadline.Token))
+        await using (var frame = new FramedUsbStream(check.GetStream()))
+        {
+            var header = new byte[1024];
+            var count = await frame.ReadAsync(header, deadline.Token);
+            if (!Encoding.ASCII.GetString(header, 0, count).StartsWith("GET /health HTTP/1.1", StringComparison.Ordinal))
+                throw new Exception("USB health did not bypass queued data.");
+            await frame.WriteAsync(Encoding.ASCII.GetBytes("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK"), deadline.Token);
+        }
+        if (!(await health).Ok) throw new Exception("USB health failed while all data slots were busy.");
+        await connections[0].DisposeAsync();
+        connections[0].Dispose();
+        connections.Add(await queued);
+        phone.Add(await listener.AcceptTcpClientAsync(deadline.Token));
+        if (transport.ConnectAsync(deadline.Token).IsCompleted) throw new Exception("Disposing twice returned an extra USB slot.");
+    }
+    finally
+    {
+        await deadline.CancelAsync();
+        foreach (var connection in connections) await connection.DisposeAsync();
+        foreach (var client in phone) client.Dispose();
+    }
+    Console.WriteLine("PASS: USB data queues, health still runs, and a disposed connection returns one slot.");
+    return;
+}
+
 if (args.Length == 2 && args[0] == "usb-lab-relay")
 {
     var adb = new AdbService(args[1]);

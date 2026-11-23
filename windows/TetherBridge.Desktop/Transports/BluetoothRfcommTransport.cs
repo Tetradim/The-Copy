@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Net.Security;
 using System.Collections.Concurrent;
 using System.Threading.Channels;
@@ -37,6 +38,36 @@ public sealed class BluetoothRfcommTransport(string deviceId, string fingerprint
     {
         var found = await DeviceInformation.FindAllAsync(BluetoothDevice.GetDeviceSelectorFromPairingState(true));
         return found.Select(item => new BluetoothPeer(item.Id, string.IsNullOrWhiteSpace(item.Name) ? "Unnamed Bluetooth device" : item.Name)).ToArray();
+    }
+
+    public static async Task<PairingPayload> RequestPairingAsync(string deviceId)
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(55));
+        var token = deadline.Token;
+        using var device = await BluetoothDevice.FromIdAsync(deviceId).AsTask(token)
+            ?? throw new IOException("The paired phone is unavailable.");
+        var serviceId = RfcommServiceId.FromUuid(Guid.Parse("953d7f10-3df7-4a8c-a0e7-85744b080d20"));
+        var services = await device.GetRfcommServicesForIdAsync(serviceId, BluetoothCacheMode.Uncached).AsTask(token);
+        if (services.Error != BluetoothError.Success || services.Services.Count == 0)
+            throw new IOException("Open TetherBridge on the phone and tap Pair with PC first.");
+        using var service = services.Services[0];
+        foreach (var unused in services.Services.Skip(1)) unused.Dispose();
+        using var socket = new StreamSocket();
+        await socket.ConnectAsync(service.ConnectionHostName, service.ConnectionServiceName,
+            SocketProtectionLevel.BluetoothEncryptionWithAuthentication).AsTask(token);
+        using var input = socket.InputStream.AsStreamForRead();
+        var header = new byte[4];
+        await input.ReadExactlyAsync(header, token);
+        var length = BinaryPrimitives.ReadInt32BigEndian(header);
+        if (length is <= 0 or > 2048) throw new IOException("Invalid Bluetooth pairing response.");
+        var data = new byte[length];
+        await input.ReadExactlyAsync(data, token);
+        if (!PairingPayloadParser.TryParse(Encoding.UTF8.GetString(data), out var pairing, out _) ||
+            !pairing.Mode.Equals("bluetooth_rfcomm", StringComparison.OrdinalIgnoreCase) ||
+            pairing.Token.Length is < 22 or > 128 ||
+            !pairing.Token.All(ch => char.IsAsciiLetterOrDigit(ch) || ch is '-' or '_'))
+            throw new IOException("The phone returned invalid Bluetooth pairing details.");
+        return pairing;
     }
 
     public Task<Stream> ConnectAsync(CancellationToken token) =>

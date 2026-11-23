@@ -78,7 +78,7 @@ Known remaining parity gaps are tracked in `docs/original-like-feature-parity.md
 ## Build notes
 
 - Android: import the Gradle project root into Android Studio.
-- Windows: open `windows/TetherBridge.Desktop/TetherBridge.Desktop.csproj` with a .NET 8 SDK on Windows.
+- Windows: open `windows/TetherBridge.Desktop/TetherBridge.Desktop.csproj` with a .NET 10 SDK on Windows.
 - Regression checks: run `powershell -ExecutionPolicy Bypass -File scripts/run-regression-tests.ps1`.
 - Full tunnel mode: not implemented in this scaffold; see `docs/full-tunnel-design.md`.
 

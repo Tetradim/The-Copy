@@ -3,6 +3,7 @@ param(
     [string]$Dotnet = 'dotnet'
 )
 $ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.IO.Compression.FileSystem
 $repo = Split-Path -Parent $PSScriptRoot
 $project = Join-Path $repo 'windows\TetherBridge.Desktop\TetherBridge.Desktop.csproj'
 $version = ([xml](Get-Content -LiteralPath $project -Raw)).Project.PropertyGroup.Version

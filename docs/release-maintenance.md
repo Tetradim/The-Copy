@@ -14,7 +14,7 @@ dotnet run --project tests/RelayTests -c Release
 .\scripts\build-release-windows.ps1 -OutputDirectory dist\release-0.6.12
 ~~~
 
-Extract the desired Windows ZIP and run the enclosed install.ps1. The framework-dependent package requires the x64 .NET 10 **Desktop Runtime**. Choose the self-contained package on a machine without that runtime. Update self-contained deployments when .NET security fixes ship because their runtime travels with the app. Compare each downloaded ZIP with SHA256SUMS.txt from the same verified release. The installer also checks the individual files before installing.
+Extract the desired Windows ZIP and run the enclosed install.ps1. The framework-dependent package requires the x64 .NET 10 **Desktop Runtime**. Choose the self-contained package on a machine without that runtime. Update self-contained deployments when .NET security fixes ship because their runtime travels with the app. To switch package variants within the same version, uninstall the installed variant first. Compare each downloaded ZIP with SHA256SUMS.txt from the same verified release. The installer also checks the individual files before installing.
 
 ## Hardware acceptance
 

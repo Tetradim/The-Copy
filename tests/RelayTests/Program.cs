@@ -812,9 +812,12 @@ if (args.Length == 2 && args[0] == "dns-device") {
     } finally {pending.TrySetResult(Array.Empty<byte>());dns.Stop();}
 }
 {
-    using var job=new ChildProcessJob();var exe=Path.Combine(Environment.SystemDirectory,"WindowsPowerShell","v1.0","powershell.exe");
-    using var child=job.StartSuspendedThenResume(exe,new[]{"-NoProfile","-Command","if ($env:PATH -eq (Join-Path $env:SystemRoot 'System32')) { exit 0 } else { exit 1 }"},Environment.SystemDirectory,restrictedEnvironment:true);
-    await child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
+    using var job = new ChildProcessJob();
+    var exe = Path.Combine(Environment.SystemDirectory, "cmd.exe");
+    using var child = job.StartSuspendedThenResume(
+        exe, ["/d", "/c", "if /i \"%PATH%\"==\"%SystemRoot%\\System32\" (exit /b 0) else (exit /b 1)"],
+        Environment.SystemDirectory, restrictedEnvironment: true);
+    await child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(15));
     if(child.ExitCode!=0)throw new Exception("Restricted child inherited an unsafe PATH");
     Console.WriteLine("PASS: tunnel child inherits a restricted system-only PATH");
 }

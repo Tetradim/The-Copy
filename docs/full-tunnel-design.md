@@ -223,3 +223,49 @@ for that address and the connection is bound to the tunnel source IP.
 The probe disables Windows proxies and redirects, and validates TLS for
 the supplied hostname. A successful result is evidence of direct HTTPS
 for that address. Test system name resolution and UDP separately.
+
+## Section 3 USB measurements
+
+Use a controlled endpoint reachable by the phone over its upstream
+connection. Run tests/usb_benchmark_server.py there with a private
+bind address and a fixed port. Its upload endpoint discards the
+payload and its download endpoint generates fixed-size test data.
+Keep it on a private or otherwise access-controlled test host.
+The default is local loopback and an automatically chosen port.
+
+Run the same origin, transfer size and concurrency for each path:
+
+    dotnet run --project windows/TetherBridge.TunnelLab -- --benchmark-bridge-usb SERIAL http://SERVER:PORT/ 16 4
+    dotnet run --project windows/TetherBridge.TunnelLab -- --benchmark-usb http://SERVER:PORT/ 16 4 direct ADAPTER_INDEX
+
+Use the first command for framed ADB USB. For the second command,
+use the native USB adapter index in the native run and the tunnel
+adapter index in the Tunnel Lab run. Get interface indices from
+Get-NetAdapter or the lab baseline. The direct benchmark checks that
+Windows prefers that interface for the endpoint before and after each
+transfer phase and bypasses the system proxy. Use a test window with
+an alternate connection before changing native tethering or tunnel
+routes. Keep the cable, port, endpoint and phone uplink comparable.
+
+Run three repetitions per path. Save the JSON output. It measures
+single-stream and concurrent upload/download, idle and loaded latency,
+and test-process CPU. The process CPU figure excludes the kernel,
+ADB server and phone, and is not a total system CPU comparison.
+Loaded latency p95 is suppressed for phases with fewer than five samples.
+
+With the normal USB desktop session connected, measure the duration
+from first observed request failure to first successful new request:
+
+    dotnet run --project windows/TetherBridge.TunnelLab -- --measure-usb-recovery http://SERVER:PORT/ 10810
+
+Start this check before unplugging. It uses fresh SOCKS requests and
+does not reconnect ADB itself. The observed interval includes any time
+the cable stays unplugged. Record that interval separately if comparing
+application recovery.
+
+A controlled Samsung smoke test sent traffic through framed USB and
+used a temporary ADB reverse mapping back to the benchmark server.
+That crosses the cable twice and uses no mobile uplink. It confirms the
+measurement path, not real Internet speed or superiority over native USB.
+Do not adopt frame packing or flushing changes until controlled A/B
+measurements show an improvement without compromising latency or half-close.

@@ -8,7 +8,7 @@
 Desktop proxy mode has passed isolated Samsung tests. Full-computer routing, automatic system DNS, and Wi-Fi Share are experimental Tunnel Lab features awaiting live validation. See the [tunnel lab instructions](docs/full-tunnel-design.md) for the required test setup.
 
 
-> **Current test builds: Windows 0.6.9 and Android 0.6.7.** Desktop proxy mode supports framed USB, encrypted Wi-Fi and Bluetooth. Full routing, system DNS and Wi-Fi Share are experimental Tunnel Lab features awaiting live validation. See docs/parity-progress.md for test results. The older version notes below are historical.
+> **Current test builds: Windows 0.6.12 and Android 0.6.8.** Desktop proxy mode supports framed USB, encrypted Wi-Fi and Bluetooth. Full routing, system DNS and Wi-Fi Share are experimental Tunnel Lab features awaiting live validation. See [test results](docs/parity-progress.md) and the [build and release guide](docs/release-maintenance.md). The older version notes below are historical.
 
 # TetherBridge Classic — Clean-room v0.6.2
 
@@ -78,7 +78,7 @@ Known remaining parity gaps are tracked in `docs/original-like-feature-parity.md
 ## Build notes
 
 - Android: import the Gradle project root into Android Studio.
-- Windows: open `windows/TetherBridge.Desktop/TetherBridge.Desktop.csproj` with a .NET 8 SDK on Windows.
+- Windows: open `windows/TetherBridge.Desktop/TetherBridge.Desktop.csproj` with a .NET 10 SDK on Windows.
 - Regression checks: run `powershell -ExecutionPolicy Bypass -File scripts/run-regression-tests.ps1`.
 - Full tunnel mode: not implemented in this scaffold; see `docs/full-tunnel-design.md`.
 

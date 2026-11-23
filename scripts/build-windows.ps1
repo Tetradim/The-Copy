@@ -1,12 +1,17 @@
-$ErrorActionPreference = "Stop"
-$Project = Join-Path $PSScriptRoot "..\windows\TetherBridge.Desktop\TetherBridge.Desktop.csproj"
+$ErrorActionPreference = 'Stop'
+$repo = Split-Path -Parent $PSScriptRoot
+$project = Join-Path $repo 'windows\TetherBridge.Desktop\TetherBridge.Desktop.csproj'
 if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
-  Write-Host "dotnet SDK is not installed. Install the .NET 8 SDK on Windows, then rerun this script."
-  exit 2
+    throw 'Install the .NET 10 SDK for Windows and run this script again.'
 }
-$Sdks = dotnet --list-sdks
-if (-not $Sdks) {
-  Write-Host "dotnet is present, but no SDK is installed. Install the .NET 8 SDK, not just the runtime, then rerun this script."
-  exit 2
+Push-Location $repo
+try {
+    $sdk = dotnet --version
+    if ($LASTEXITCODE -ne 0 -or $sdk -notmatch '^10\.') {
+        throw 'Install a .NET 10 SDK matching global.json and run this script again.'
+    }
+    dotnet build $project -c Release
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+} finally {
+    Pop-Location
 }
-dotnet build $Project -c Release

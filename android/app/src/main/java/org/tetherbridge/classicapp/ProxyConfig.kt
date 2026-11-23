@@ -12,16 +12,18 @@ data class ProxyConfig(
     val token: String,
     val requireToken: Boolean
 ) {
+    internal fun canReuseUsb(request: ProxyConfig, backendListening: Boolean, framesListening: Boolean): Boolean =
+        mode == BridgeMode.USB && request.mode == BridgeMode.USB && this == request && backendListening && framesListening
+
     companion object {
         const val DEFAULT_PHONE_PORT: Int = 10888
-        const val USB_HTTP_PORT: Int = 10890
 
         fun forMode(mode: BridgeMode, token: String = generateToken()): ProxyConfig {
             return when (mode) {
                 BridgeMode.USB -> ProxyConfig(
                     mode = mode,
                     listenHost = "127.0.0.1",
-                    listenPort = USB_HTTP_PORT,
+                    listenPort = 0,
                     token = token,
                     requireToken = false
                 )

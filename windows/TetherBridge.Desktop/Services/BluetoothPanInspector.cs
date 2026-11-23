@@ -1,4 +1,7 @@
+using System.Net;
 using System.Net.NetworkInformation;
+using System.Net.Sockets;
+using TetherBridge.Desktop.FullTunnel;
 
 namespace TetherBridge.Desktop.Services;
 
@@ -7,18 +10,35 @@ public sealed class BluetoothPanInspector
     public DiagnosticResult CheckPanAvailability()
     {
         var adapters = NetworkInterface.GetAllNetworkInterfaces()
-            .Where(n => n.Description.Contains("Bluetooth", StringComparison.OrdinalIgnoreCase) ||
-                        n.Name.Contains("Bluetooth", StringComparison.OrdinalIgnoreCase) ||
-                        n.Description.Contains("PAN", StringComparison.OrdinalIgnoreCase))
+            .Where(adapter => adapter.Description.Contains("Bluetooth", StringComparison.OrdinalIgnoreCase) ||
+                              adapter.Name.Contains("Bluetooth", StringComparison.OrdinalIgnoreCase))
             .ToArray();
 
+        const string setup = "Enable Bluetooth tethering on Android, then open Windows Bluetooth devices and join the phone's Personal Area Network as an Access Point.";
         if (adapters.Length == 0)
-            return DiagnosticResult.Fail("BLUETOOTH_PAN_UNAVAILABLE", "Windows does not show a Bluetooth PAN adapter.", "Enumerate network adapters", "Pair the phone and enable Bluetooth tethering/PAN on the phone.");
+            return DiagnosticResult.Fail("BLUETOOTH_PAN_UNAVAILABLE", "Windows does not show a Bluetooth network adapter.", "Network adapter inventory", setup);
 
-        var up = adapters.FirstOrDefault(a => a.OperationalStatus == OperationalStatus.Up);
-        if (up is null)
-            return DiagnosticResult.Fail("BLUETOOTH_PAN_DOWN", "Bluetooth PAN adapter exists but is not connected.", "NetworkInterface.OperationalStatus", "Connect to the phone's Bluetooth network from Windows Settings.");
+        var connected = adapters.Where(adapter => adapter.OperationalStatus == OperationalStatus.Up).ToArray();
+        if (connected.Length == 0)
+            return DiagnosticResult.Fail("BLUETOOTH_PAN_DOWN", "Windows shows a Bluetooth network adapter, but it is disconnected.", "Network adapter status", setup);
 
-        return DiagnosticResult.Pass("BLUETOOTH_PAN_OK", "Bluetooth PAN adapter is up: " + up.Name, "NetworkInterface enumeration");
+        var routed = connected.Select(adapter => (adapter.Name, Ip: adapter.GetIPProperties()))
+            .Where(item => item.Ip.GatewayAddresses.Any(gateway => IsGateway(gateway.Address) &&
+                gateway.Address.AddressFamily == AddressFamily.InterNetwork))
+            .ToArray();
+        if (routed.Length == 0)
+            return DiagnosticResult.Fail("BLUETOOTH_PAN_NO_GATEWAY", "The Bluetooth adapter is up but has no IPv4 gateway.", "Bluetooth adapter IP configuration", "Wait for the phone to assign network settings. Check that Bluetooth tethering is enabled on the phone.");
+
+        var preferred = WindowsRouteTable.GetPreferredInterface(IPAddress.Parse("1.1.1.1"));
+        var selected = routed.FirstOrDefault(item => item.Ip.GetIPv4Properties()?.Index == preferred);
+        if (selected.Ip is null)
+            return DiagnosticResult.Fail("BLUETOOTH_PAN_OTHER_ROUTE", "Bluetooth PAN has an IPv4 gateway, but Windows prefers another adapter for internet traffic.", "Windows route lookup", "Use a test computer or a planned test window to verify the Bluetooth internet path.");
+
+        return DiagnosticResult.Pass("BLUETOOTH_PAN_ROUTE_OK",
+            $"Windows prefers {selected.Name} for the IPv4 test destination. Internet reachability still needs a traffic test.",
+            "Windows route lookup");
     }
+
+    private static bool IsGateway(IPAddress address) =>
+        !address.Equals(IPAddress.Any) && !address.Equals(IPAddress.IPv6Any) && !IPAddress.IsLoopback(address);
 }

@@ -66,6 +66,9 @@ class HttpConnectProxy(private val config: ProxyConfig, private val onAuthentica
     private var server: ServerSocket? = null
     private var acceptThread: Thread? = null
 
+    val boundPort: Int get() = server?.localPort ?: -1
+    val isListening: Boolean get() = running.get()
+
     @Synchronized
     fun start() {
         if (running.get()) return
@@ -92,7 +95,7 @@ class HttpConnectProxy(private val config: ProxyConfig, private val onAuthentica
 
     private fun listenLoop() {
         try {
-            Log.i(TAG, "LISTENER_STARTED mode=${config.mode} bind=${config.listenHost}:${config.listenPort} requireToken=${config.requireToken}")
+            Log.i(TAG, "LISTENER_STARTED mode=${config.mode} bind=${config.listenHost}:$boundPort requireToken=${config.requireToken}")
             while (running.get()) {
                 val client = server!!.accept()
                 clients.add(client)
@@ -111,17 +114,17 @@ class HttpConnectProxy(private val config: ProxyConfig, private val onAuthentica
             }
         } catch (ex: SocketException) {
             if (running.get()) {
-                Log.e(TAG, "LISTENER_SOCKET_ERROR mode=${config.mode} bind=${config.listenHost}:${config.listenPort} error=${ex.javaClass.simpleName}: ${ex.message}", ex)
+                Log.e(TAG, "LISTENER_SOCKET_ERROR mode=${config.mode} bind=${config.listenHost}:$boundPort error=${ex.javaClass.simpleName}: ${ex.message}", ex)
             }
             running.set(false)
         } catch (ex: Exception) {
-            Log.e(TAG, "LISTENER_FATAL mode=${config.mode} bind=${config.listenHost}:${config.listenPort} error=${ex.javaClass.simpleName}: ${ex.message}", ex)
+            Log.e(TAG, "LISTENER_FATAL mode=${config.mode} bind=${config.listenHost}:$boundPort error=${ex.javaClass.simpleName}: ${ex.message}", ex)
             stop()
         }
     }
 
     fun stop() {
-        Log.i(TAG, "LISTENER_STOP mode=${config.mode} bind=${config.listenHost}:${config.listenPort}")
+        Log.i(TAG, "LISTENER_STOP mode=${config.mode} bind=${config.listenHost}:$boundPort")
         running.set(false)
         try { server?.close() } catch (_: Exception) {}
         clients.forEach { closeQuietly(it) }
@@ -475,7 +478,7 @@ class HttpConnectProxy(private val config: ProxyConfig, private val onAuthentica
             "\"capabilities\":[\"tcp\",\"udp\"]," +
             "\"mode\":\"${config.mode}\"," +
             "\"listenHost\":\"${config.listenHost}\"," +
-            "\"proxyPort\":${config.listenPort}," +
+            "\"proxyPort\":$boundPort," +
             "\"uptimeMs\":${now - startedAtMillis}," +
             "\"timestampMs\":$now$counters}"
         return "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ${body.toByteArray(Charsets.UTF_8).size}\r\nConnection: close\r\n\r\n$body"

@@ -15,7 +15,7 @@ $package = if ($PackagePath) { [IO.Path]::GetFullPath($PackagePath) } else { Joi
 $publish = $publish.TrimEnd('\')
 $package = $package.TrimEnd('\')
 if (!(Test-Path -LiteralPath (Join-Path $publish 'TetherBridge.Desktop.exe') -PathType Leaf)) {
-    throw 'Publish the self-contained Windows build first.'
+    throw 'Publish the Windows build first.'
 }
 if ($package.Equals($publish, [StringComparison]::OrdinalIgnoreCase) -or
     $package.StartsWith($publish + '\', [StringComparison]::OrdinalIgnoreCase)) {

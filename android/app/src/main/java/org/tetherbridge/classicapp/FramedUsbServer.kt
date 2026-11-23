@@ -18,7 +18,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 /** Loopback-only framed USB transport: zero-length records mean write EOF. */
 class FramedUsbServer(
     private val listenPort: Int = PORT,
-    private val backendPort: Int = ProxyConfig.USB_HTTP_PORT,
+    private val backendPort: Int,
     private val secure: Boolean = false,
     private val authSessions: AuthenticatedSessionRegistry = AuthenticatedSessionRegistry(),
     private val onFatal: (String) -> Unit = {}
@@ -29,6 +29,8 @@ class FramedUsbServer(
     private val workers = ThreadPoolExecutor(0, 32, 30, TimeUnit.SECONDS, SynchronousQueue<Runnable>(), ThreadPoolExecutor.AbortPolicy())
     private var listener: ServerSocket? = null
     private var acceptThread: Thread? = null
+
+    val isListening: Boolean get() = running.get()
 
     fun start() {
         val server = if (secure) WirelessTls.serverContext().serverSocketFactory.createServerSocket() else ServerSocket()

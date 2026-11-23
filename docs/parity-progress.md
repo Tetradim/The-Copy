@@ -164,3 +164,70 @@ Last reviewed: 2026-11-17. This is a monitoring record, not a claim of completio
 - Packaged Android 0.6.7 for device testing. Version display, pairing payload, USB pairing metadata and status use the build version. Android unit tests and assembly passed, and the APK signature and manifest version were checked. The APK was not installed during this run.
 - Tunnel Lab now checks the interface Windows actually prefers for addresses in each leased route range after startup and renewal. The IPv4 and IPv6 lookup matched Find-NetRoute on the current system without sending traffic or changing routes. The Release build and regression checks passed. This check still needs a driver-backed test.
 - Added a lab HTTPS acceptance check that verifies Windows route selection, binds the request to the exact tunnel adapter address, and disables Windows proxies while retaining TLS validation. Local checks rejected plaintext and an adapter without the tunnel address. Release build and regressions passed. A successful hardware-backed HTTPS check remains pending.
+
+## Section 1 Bluetooth verification
+
+Native Bluetooth PAN uses Android Bluetooth tethering and the Windows
+Bluetooth Devices page. The desktop opens that page and reports whether
+Windows sees a Bluetooth adapter, whether it has an IPv4 gateway, and
+whether Windows prefers it for the sample destination. The diagnostic does
+not send traffic, join the PAN, or alter routes.
+
+The app bridge uses the selected paired device and the existing token and
+certificate pin. Data setup has a 15-second deadline including the slot
+wait, RFCOMM setup and TLS authentication. Reconnect is enabled by default
+for a new Bluetooth session and can be turned off before connecting.
+Recovery attempts use backoff of 1, 2, 4 and 8 seconds, with an existing
+15-second limit per probe. Successful recovery permits new connections.
+Existing app connections may need to retry. Disconnect cancels recovery.
+If attempts are exhausted the desktop restores its proxy configuration.
+
+Local checks:
+  dotnet run --project tests/RelayTests -- bluetooth-recovery-test
+  dotnet run --project tests/RelayTests -- check-bluetooth-pan
+
+OnePlus handoff: keep the laptop's current internet connection available.
+Start Bluetooth Bridge on the OnePlus and load its pairing details locally
+in the Windows app. Confirm HTTPS and UDP/TCP DNS, then turn Bluetooth off
+and back on while the desktop session is retrying. Verify a new request
+succeeds and then disconnect normally. For native PAN, use a separate test
+system or a planned test window before joining, since it can change the
+preferred network. Windows recognized the paired OnePlus on inspection,
+but PAN was down and OnePlus traffic and recovery are still unverified.
+Section 2 remains on hold until section 1 is checked.
+
+## Section 2 USB setup and cleanup verification
+
+Use USB setup and checks to distinguish USB data visibility, a native USB
+network adapter and route, ADB authorization, an installed Android app, and
+a responding USB bridge. Native USB uses Android's USB tethering switch.
+The bridge uses an authorized ADB connection. Its health check allocates a
+temporary mapping and releases only that mapping. Platform mode can change
+which interfaces Windows sees, so absence from Windows Portable Devices
+alone is not evidence of a faulty cable.
+
+The desktop retains a failed USB cleanup in memory. Use Retry USB forward
+cleanup after the device or ADB server becomes available. Cleanup checks
+device, local port and phone port before removing a mapping. It never
+uses remove-all. The tests cover temporary lookup and removal failures,
+successful retry, and a local port reused by an unrelated mapping.
+
+For live comparison, first confirm the bridge with the existing USB
+configuration. Inspect the native tether path separately on a spare
+Windows system or in a planned window, since it can change the preferred
+network. Test route selection and HTTPS/DNS for each path. Save throughput
+and latency measurements for section 3.
+
+Windows detected the Galaxy Tab A9+ as a USB data device and ADB was
+authorized. The TetherBridge Android service was stopped and the app's
+start button was not exposed in the current Android UI. An isolated probe
+preserved both the network baseline and PdaNet's forward. No native USB
+network adapter was detected. Live comparison remains open. Section 3
+has not started.
+- Installed the Android 0.6.7 APK on the Samsung and verified its package version. Installed self-contained Windows 0.6.10 for the current user and verified its Start menu shortcut. It includes sections 1 and 2. HTTPS remained available. Android USB Bridge needs to be started again before the live bridge check, and native USB comparison remains pending.
+- Live Samsung Android 0.6.7 USB bridge passed HTTPS over the desktop SOCKS relay and DNS preflight over IPv4 and IPv6 loopback using TCP and UDP. The Windows adapter/DNS/route baseline and pre-existing ADB forward list matched after the test. Native Android USB tethering was still off, so side-by-side native testing remains open.
+- Support bundle and Samsung logcat correlated the USB loss with a repeated Android start and EADDRINUSE on the internal port 10890. Android 0.6.8 keeps a healthy USB session on repeated Start and allocates its internal loopback HTTP port dynamically. The framed ADB endpoint remains 10889. Android unit tests/build and Windows Release/regression checks passed. Installed 0.6.8 on the Samsung. The Windows source also avoids replacing a healthy same-device USB session, but the installed Windows build was not replaced during the incident review. Older test probes that directly used 10890 are legacy; use the framed endpoint or Tunnel Lab USB traffic check.
+- Samsung Android 0.6.8 passed live HTTPS and TCP/UDP DNS through an isolated ADB forward after the port-bind correction. Existing ADB forwards matched the baseline. Live repeated-Start verification remains pending because the Start button was not visible during the check.
+- Confirmed on the Samsung that a second Start on Android 0.6.8 logged USB_START_ALREADY_RUNNING without a subsequent PROXY_STOP. HTTPS and TCP/UDP DNS passed afterward, and the existing ADB forwards matched the baseline.
+- Section 3 benchmark implementation reports single/concurrent upload and download, latency, benchmark-process CPU, and a separate SOCKS outage-to-recovery check. Local loopback and Samsung synthetic ADB forward/reverse smoke tests passed. The latter crosses USB twice and is not a native USB versus ADB or Internet speed comparison. Existing mappings were preserved. Real native/ADB/tunnel comparisons and physical unplug/replug remain open. Section 4 has not started.
+- Section 4 desktop flow is in Windows 0.6.11. One Connect button selects USB or Bluetooth and an explicit HTTPS test uses the same local HTTP proxy Windows configures. Advanced contains network options, manual pairing, traffic, diagnostics and logs. The Windows form initialized in a smoke test without connecting, and build, regression, and isolated installer checks passed. Whole-computer routing remains in Tunnel Lab pending live direct HTTPS, UDP, DNS and forced-exit validation.

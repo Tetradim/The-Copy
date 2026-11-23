@@ -62,6 +62,99 @@ if (args is ["tunnel-command-test"])
     Console.WriteLine("PASS: read-only netsh, command timeout and command cancellation");
     return;
 }
+if (args is ["check-native-usb"])
+{
+    Console.WriteLine(new NativeTetherInspector().CheckUsbRoute().ToDisplayString());
+    return;
+}
+if (args is ["usb-cleanup-retry-test"])
+{
+    var failList = false;
+    var failRemove = false;
+    var removed = 0;
+    var mapping = "TESTPHONE tcp:34210 tcp:10889";
+    var stranger = "OTHERPHONE tcp:8739 tcp:8739";
+    Task<(int, string, string)> CleanupFakeAdb(string _, string args) => Task.FromResult(args switch
+    {
+        "devices -l" => (0, "TESTPHONE device model:Fixture", ""),
+        "-s TESTPHONE forward tcp:0 tcp:10889" => (0, "34210", ""),
+        "forward --list" when failList => (1, "", "Temporary list failure"),
+        "forward --list" => (0, mapping + "\n" + stranger, ""),
+        "-s TESTPHONE forward --remove tcp:34210" when failRemove => (1, "", "Temporary removal failure"),
+        "-s TESTPHONE forward --remove tcp:34210" => (++removed == 1 ? 0 : 1, "", ""),
+        _ => throw new Exception("Unexpected ADB command: " + args)
+    });
+    var owner = new AdbService("TESTPHONE", () => "fake-adb", CleanupFakeAdb);
+    if (!(await owner.AllocateForwardAsync(10889)).Result.Ok) throw new Exception("Forward allocation failed.");
+    failList = true;
+    if ((await owner.ReleaseOwnedForwardAsync()).Code != "ADB_FORWARD_LIST_FAILED")
+        throw new Exception("List failure was not reported.");
+    failList = false;
+    failRemove = true;
+    if ((await owner.ReleaseOwnedForwardAsync()).Code != "ADB_FORWARD_REMOVE_FAILED")
+        throw new Exception("Remove failure was not reported.");
+    failRemove = false;
+    if ((await owner.ReleaseOwnedForwardAsync()).Code != "ADB_FORWARD_REMOVED" || removed != 1)
+        throw new Exception("Retry lost ownership of the exact mapping.");
+    if ((await owner.ReleaseOwnedForwardAsync()).Code != "ADB_FORWARD_NONE")
+        throw new Exception("Success did not discard the ownership record.");
+    if (!(await owner.AllocateForwardAsync(10889)).Result.Ok) throw new Exception("New forward allocation failed.");
+    mapping = "OTHERPHONE tcp:34210 tcp:10889";
+    if ((await owner.ReleaseOwnedForwardAsync()).Code != "ADB_FORWARD_GONE" || removed != 1)
+        throw new Exception("Cleanup attempted to modify an unrelated mapping.");
+    if (NativeTetherInspector.IsNativeUsbCandidate("generic USB Ethernet adapter") ||
+        !NativeTetherInspector.IsNativeUsbCandidate("Remote NDIS Compatible Device") ||
+        !NativeTetherInspector.IsNativeUsbCandidate("UsbNcm Host Device"))
+        throw new Exception("USB tether adapter classification failed.");
+    Console.WriteLine("PASS: USB cleanup survives temporary failures, preserves unrelated forwards, and recognizes native adapter candidates");
+    return;
+}
+if (args is ["check-bluetooth-pan"])
+{
+    Console.WriteLine(new BluetoothPanInspector().CheckPanAvailability().ToDisplayString());
+    return;
+}
+if (args is ["bluetooth-recovery-test"])
+{
+    var attempts = 0;
+    var waits = new List<TimeSpan>();
+    Task Wait(TimeSpan delay, CancellationToken token) { waits.Add(delay); return Task.CompletedTask; }
+    Task<DiagnosticResult> Probe(CancellationToken token) => Task.FromResult(++attempts == 3
+        ? DiagnosticResult.Pass("UP", "Bridge recovered")
+        : DiagnosticResult.Fail("DOWN", "Bridge unavailable", "Test", "Wait"));
+    var result = await BluetoothConnectionRecovery.RetryAsync(Probe, CancellationToken.None, Wait);
+    if (!result.Ok || attempts != 3 || !waits.Select(wait => wait.TotalSeconds).SequenceEqual(new double[] { 1, 2, 4 }))
+        throw new Exception("Bluetooth did not recover after bounded backoff.");
+    waits.Clear();
+    result = await BluetoothConnectionRecovery.RetryAsync(_ => Task.FromResult(
+        DiagnosticResult.Fail("DOWN", "Bridge unavailable", "Test", "Wait")), CancellationToken.None, Wait);
+    if (result.Ok || waits.Count != 4) throw new Exception("Bluetooth did not stop retrying after the configured attempts.");
+
+    using var cancel = new CancellationTokenSource();
+    try
+    {
+        await BluetoothConnectionRecovery.RetryAsync(_ => throw new Exception("A canceled reconnect still probed the phone."),
+            cancel.Token, (_, _) => { cancel.Cancel(); return Task.CompletedTask; });
+        throw new Exception("Manual disconnect did not cancel retries.");
+    }
+    catch (OperationCanceledException) when (cancel.IsCancellationRequested) { }
+
+    var held = false;
+    try
+    {
+        await BluetoothConnectionRecovery.OpenWithDeadlineAsync(async token =>
+        {
+            held = true;
+            try { await Task.Delay(Timeout.InfiniteTimeSpan, token); return Stream.Null; }
+            finally { held = false; }
+        }, TimeSpan.FromMilliseconds(40), CancellationToken.None);
+        throw new Exception("Stalled Bluetooth connection did not time out.");
+    }
+    catch (TimeoutException) { }
+    if (held) throw new Exception("Deadline returned before the connection was released.");
+    Console.WriteLine("PASS: Bluetooth reconnect, exhausted retries, manual cancellation, and data connection deadline");
+    return;
+}
 if (args is ["relay-startup-rollback-test"])
 {
     using var occupied = new TcpListener(IPAddress.Loopback, 0) { ExclusiveAddressUse = true };
@@ -719,9 +812,12 @@ if (args.Length == 2 && args[0] == "dns-device") {
     } finally {pending.TrySetResult(Array.Empty<byte>());dns.Stop();}
 }
 {
-    using var job=new ChildProcessJob();var exe=Path.Combine(Environment.SystemDirectory,"WindowsPowerShell","v1.0","powershell.exe");
-    using var child=job.StartSuspendedThenResume(exe,new[]{"-NoProfile","-Command","if ($env:PATH -eq (Join-Path $env:SystemRoot 'System32')) { exit 0 } else { exit 1 }"},Environment.SystemDirectory,restrictedEnvironment:true);
-    await child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
+    using var job = new ChildProcessJob();
+    var exe = Path.Combine(Environment.SystemDirectory, "WindowsPowerShell", "v1.0", "powershell.exe");
+    using var child = job.StartSuspendedThenResume(
+        exe, ["-NoProfile", "-NonInteractive", "-Command", "if ($env:PATH -eq [Environment]::SystemDirectory) { exit 0 } else { exit 1 }"],
+        Environment.SystemDirectory, restrictedEnvironment: true);
+    await child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(30));
     if(child.ExitCode!=0)throw new Exception("Restricted child inherited an unsafe PATH");
     Console.WriteLine("PASS: tunnel child inherits a restricted system-only PATH");
 }

@@ -42,8 +42,17 @@ jobs:
         run: .\scripts\build-release-windows.ps1 -OutputDirectory "$env:RUNNER_TEMP\tetherbridge-windows"
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: Windows-test-packages
-          path: ${{ runner.temp }}/tetherbridge-windows/
+          name: Windows-compact
+          path: |
+            ${{ runner.temp }}/tetherbridge-windows/*-framework-dependent.zip
+            ${{ runner.temp }}/tetherbridge-windows/SHA256SUMS.txt
+          if-no-files-found: error
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: Windows-self-contained
+          path: |
+            ${{ runner.temp }}/tetherbridge-windows/*-self-contained.zip
+            ${{ runner.temp }}/tetherbridge-windows/SHA256SUMS.txt
           if-no-files-found: error
 
   android:

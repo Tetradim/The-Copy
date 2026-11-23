@@ -1,0 +1,25 @@
+name: Publish Android test APK
+on:
+  push:
+    branches: [publish-android-0-6-8-apk]
+permissions:
+  actions: read
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Copy the verified CI APK into the test release
+        shell: bash
+        run: |
+          gh run download 45104170680 --repo "$GITHUB_REPOSITORY" --name Android-debug-APK --dir "$RUNNER_TEMP/apk"
+          cd "$RUNNER_TEMP/apk"
+          mv app-debug.apk TetherBridge-0.6.8-debug.apk
+          expected="sha256:$(sha256sum TetherBridge-0.6.8-debug.apk | cut -d ' ' -f 1)"
+          gh release upload android-0.6.8-test TetherBridge-0.6.8-debug.apk --repo "$GITHUB_REPOSITORY" --clobber
+          actual="$(gh api "repos/$GITHUB_REPOSITORY/releases/454954623" --jq '.assets[] | select(.name == "TetherBridge-0.6.8-debug.apk" and .state == "uploaded") | .digest')"
+          test "$actual" = "$expected"
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/454954623" -F draft=false -F prerelease=true -f make_latest=false --jq '.html_url'
